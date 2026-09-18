@@ -102,3 +102,9 @@ export interface JobRequest {
   format_ids?: Record<string, string> | null
   audio_only?: boolean
 }
+
+/** 버튼에 표시할 다운로드 진행 상태 */
+export interface DownloadState {
+  status: 'starting' | 'running' | 'done' | 'error'
+  percent: number
+}

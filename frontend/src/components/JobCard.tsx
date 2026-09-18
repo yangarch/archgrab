@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useJobStream } from '../hooks/useJobStream'
-import type { Job } from '../api/types'
+import type { Job, JobStatus } from '../api/types'
 
 const STATUS_LABEL: Record<string, string> = {
   queued: '대기 중',
@@ -29,14 +29,20 @@ interface Props {
   /** 이번 세션에서 버튼으로 시작한 작업만 자동 저장한다.
    *  과거 작업 목록까지 자동 저장하면 새로고침마다 파일이 쏟아진다. */
   autoSave?: boolean
+  /** 상태를 올려보내 누른 버튼이 진행률을 보여줄 수 있게 한다 */
+  onStatus?: (jobId: string, status: JobStatus, percent: number) => void
 }
 
-export default function JobCard({ initial, autoSave = false }: Props) {
+export default function JobCard({ initial, autoSave = false, onStatus }: Props) {
   const job = useJobStream(initial)
   // ref 는 중복 발동 방지용(StrictMode 는 effect 를 두 번 돌린다),
   // state 는 화면 갱신용. ref 만 쓰면 안내 문구가 리렌더될 때까지 안 뜬다.
   const fired = useRef(false)
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    onStatus?.(job.id, job.status, job.progress.percent)
+  }, [onStatus, job.id, job.status, job.progress.percent])
 
   useEffect(() => {
     if (!autoSave || fired.current || job.status !== 'done') return

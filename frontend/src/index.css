@@ -227,6 +227,38 @@ button.dl {
   padding: 10px 12px;
 }
 
+/* 진행 중 표시 — 버튼이 스스로 상태를 알려준다 */
+button[aria-busy='true'] { cursor: progress; }
+button.is-done {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+button.primary.is-done { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+button.is-error {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+button.primary.is-error { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }
+
+.spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+  .bar-fill { transition: none; }
+}
+
 /* ── 좁은 화면 (파일 맨 끝: 뒤의 일반 규칙에 덮이지 않도록) ── */
 @media (max-width: 520px) {
   .hide-narrow { display: none; }

@@ -1,12 +1,15 @@
 import { useMemo, useState } from 'react'
 
-import type { MediaInfo, MediaItem } from '../api/types'
+import type { DownloadState, MediaInfo, MediaItem } from '../api/types'
+
+/** 한번에 받기 버튼의 진행 상태 키 (항목 id 와 섞이지 않는 이름) */
+export const BULK_KEY = '__bulk__'
 
 interface Props {
   info: MediaInfo
-  busy: boolean
-  /** 선택한 항목들을 한 작업으로 받는다 */
-  onDownload: (itemIds: string[]) => void
+  /** 요청키 → 진행 상태 */
+  downloads: Record<string, DownloadState>
+  onDownload: (itemIds: string[], key: string) => void
 }
 
 function duration(seconds?: number | null) {
@@ -24,7 +27,27 @@ function itemKind(item: MediaItem) {
   }
 }
 
-export default function MediaPreview({ info, busy, onDownload }: Props) {
+/** 버튼 문구·상태. 서버 작업이 몇 초 걸리므로 누른 버튼이 직접 알려줘야 한다. */
+function buttonView(state: DownloadState | undefined, idle: string) {
+  switch (state?.status) {
+    case 'starting':
+      return { text: '요청 중…', busy: true, tone: '' }
+    case 'running':
+      return {
+        text: state.percent > 0 ? `받는 중 ${Math.round(state.percent)}%` : '받는 중…',
+        busy: true,
+        tone: '',
+      }
+    case 'done':
+      return { text: '저장됨 ✓', busy: false, tone: ' is-done' }
+    case 'error':
+      return { text: '실패 · 다시', busy: false, tone: ' is-error' }
+    default:
+      return { text: idle, busy: false, tone: '' }
+  }
+}
+
+export default function MediaPreview({ info, downloads, onDownload }: Props) {
   const allIds = useMemo(() => info.items.map((item) => item.id), [info])
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allIds))
 
@@ -40,6 +63,8 @@ export default function MediaPreview({ info, busy, onDownload }: Props) {
   const chosen = useMemo(() => allIds.filter((id) => selected.has(id)), [allIds, selected])
   const allSelected = chosen.length === allIds.length && allIds.length > 0
   const videoCount = info.items.filter((item) => item.type === 'video').length
+
+  const bulk = buttonView(downloads[BULK_KEY], `선택한 ${chosen.length}개 한번에`)
 
   return (
     <div className="card">
@@ -68,11 +93,13 @@ export default function MediaPreview({ info, busy, onDownload }: Props) {
         </button>
         <span className="spacer" />
         <button
-          className="primary"
-          disabled={busy || chosen.length === 0}
-          onClick={() => onDownload(chosen)}
+          className={`primary${bulk.tone}`}
+          disabled={bulk.busy || chosen.length === 0}
+          aria-busy={bulk.busy}
+          onClick={() => onDownload(chosen, BULK_KEY)}
         >
-          {busy ? '요청 중…' : `선택한 ${chosen.length}개 한번에`}
+          {bulk.busy && <span className="spinner" aria-hidden="true" />}
+          {bulk.text}
         </button>
       </div>
 
@@ -81,6 +108,7 @@ export default function MediaPreview({ info, busy, onDownload }: Props) {
           const active = selected.has(item.id)
           const { ext, label } = itemKind(item)
           const format = item.formats[0]
+          const view = buttonView(downloads[item.id], `${ext} 내려받기`)
           return (
             <div key={item.id} className={`tile${active ? ' tile-on' : ''}`}>
               {/* 썸네일 전체가 선택 토글 */}
@@ -112,13 +140,15 @@ export default function MediaPreview({ info, busy, onDownload }: Props) {
                 <div className="small muted clamp" title={format?.label}>
                   {format?.label ?? '원본'}
                 </div>
-                {/* 요청사항: 항목마다 타입이 보이는 개별 다운로드 버튼 */}
+                {/* 항목마다 타입이 보이는 개별 다운로드 버튼 */}
                 <button
-                  className="small dl"
-                  disabled={busy}
-                  onClick={() => onDownload([item.id])}
+                  className={`small dl${view.tone}`}
+                  disabled={view.busy}
+                  aria-busy={view.busy}
+                  onClick={() => onDownload([item.id], item.id)}
                 >
-                  {ext} 내려받기
+                  {view.busy && <span className="spinner" aria-hidden="true" />}
+                  {view.text}
                 </button>
               </div>
             </div>
