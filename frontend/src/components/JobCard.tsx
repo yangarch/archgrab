@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react'
+
 import { useJobStream } from '../hooks/useJobStream'
 import type { Job } from '../api/types'
 
@@ -22,8 +24,35 @@ function humanSize(bytes: number) {
   return `${value.toFixed(1)}${units[unit]}`
 }
 
-export default function JobCard({ initial }: { initial: Job }) {
+interface Props {
+  initial: Job
+  /** 이번 세션에서 버튼으로 시작한 작업만 자동 저장한다.
+   *  과거 작업 목록까지 자동 저장하면 새로고침마다 파일이 쏟아진다. */
+  autoSave?: boolean
+}
+
+export default function JobCard({ initial, autoSave = false }: Props) {
   const job = useJobStream(initial)
+  // ref 는 중복 발동 방지용(StrictMode 는 effect 를 두 번 돌린다),
+  // state 는 화면 갱신용. ref 만 쓰면 안내 문구가 리렌더될 때까지 안 뜬다.
+  const fired = useRef(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    if (!autoSave || fired.current || job.status !== 'done') return
+    // 여러 항목을 묶은 작업은 zip 하나만, 단일 항목은 그 파일을 저장한다
+    const zip = job.files.find((f) => f.name.endsWith('.zip'))
+    const target = zip ?? job.files[0]
+    if (!target) return
+    fired.current = true
+    const link = document.createElement('a')
+    link.href = `/api/files/${target.token}`
+    link.download = target.name
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setSaved(true)
+  }, [autoSave, job.status, job.files])
   const active = job.status === 'downloading' || job.status === 'packaging'
   const percent = job.status === 'done' ? 100 : job.progress.percent
 
@@ -56,6 +85,11 @@ export default function JobCard({ initial }: { initial: Job }) {
 
       {job.status === 'done' && job.files.length > 0 && (
         <div className="files" style={{ marginTop: 10 }}>
+          {saved && (
+            <div className="muted small">
+              브라우저 다운로드 폴더에 저장했습니다. 다시 받으려면 아래를 누르세요.
+            </div>
+          )}
           {job.files.map((file) => (
             <a key={file.token} className="file" href={`/api/files/${file.token}`} download>
               <span className="clamp">{file.name}</span>

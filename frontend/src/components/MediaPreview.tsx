@@ -36,7 +36,9 @@ export default function MediaPreview({ info, busy, onDownload }: Props) {
       return next
     })
 
-  const allSelected = selected.size === allIds.length
+  // key 로 재마운트되지만, 그래도 없는 id 가 집계나 요청에 섞이지 않게 막는다.
+  const chosen = useMemo(() => allIds.filter((id) => selected.has(id)), [allIds, selected])
+  const allSelected = chosen.length === allIds.length && allIds.length > 0
   const videoCount = info.items.filter((item) => item.type === 'video').length
 
   return (
@@ -67,10 +69,10 @@ export default function MediaPreview({ info, busy, onDownload }: Props) {
         <span className="spacer" />
         <button
           className="primary"
-          disabled={busy || selected.size === 0}
-          onClick={() => onDownload([...selected])}
+          disabled={busy || chosen.length === 0}
+          onClick={() => onDownload(chosen)}
         >
-          {busy ? '요청 중…' : `선택한 ${selected.size}개 한번에`}
+          {busy ? '요청 중…' : `선택한 ${chosen.length}개 한번에`}
         </button>
       </div>
 
@@ -90,7 +92,14 @@ export default function MediaPreview({ info, busy, onDownload }: Props) {
               >
                 <div className="thumb">
                   {item.thumbnail ? (
-                    <img src={item.thumbnail} alt="" loading="lazy" />
+                    <img
+                      src={item.thumbnail}
+                      alt=""
+                      /* loading="lazy" 를 쓰지 않는다 — Chrome 의 교차 판정이
+                         .thumb 의 overflow/aspect-ratio 와 얽히면 요청을 아예
+                         시작하지 않는 경우가 있었다. 썸네일은 작고 개수도 적다. */
+                      decoding="async"
+                    />
                   ) : (
                     <span className="muted small">미리보기 없음</span>
                   )}

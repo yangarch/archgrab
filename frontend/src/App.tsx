@@ -17,6 +17,8 @@ export default function App() {
   const [resolved, setResolved] = useState<{ info: MediaInfo; url: string } | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
   const [submitting, setSubmitting] = useState(false)
+  // 이번 세션에서 시작한 작업 — 완료 시 자동 저장 대상
+  const [started, setStarted] = useState<Set<string>>(() => new Set())
   const [jobError, setJobError] = useState<string | null>(null)
 
   const refreshSession = useCallback(async () => {
@@ -46,6 +48,7 @@ export default function App() {
         item_ids: itemIds.length === resolved.info.items.length ? null : itemIds,
       })
       const job = await api.getJob(job_id)
+      setStarted((current) => new Set(current).add(job_id))
       setJobs((current) => [job, ...current])
     } catch (caught) {
       setJobError(caught instanceof ApiError ? caught.message : '작업 생성에 실패했습니다.')
@@ -96,7 +99,14 @@ export default function App() {
           />
 
           {resolved && (
-            <MediaPreview info={resolved.info} busy={submitting} onDownload={startDownload} />
+            <MediaPreview
+              /* 새 URL 이면 재마운트 — 이전 게시글의 선택 상태가 남으면
+                 "선택한 15개" 가 1개짜리 게시글에서도 그대로 보인다 */
+              key={resolved.url}
+              info={resolved.info}
+              busy={submitting}
+              onDownload={startDownload}
+            />
           )}
 
           {jobError && <div className="error small">{jobError}</div>}
@@ -110,7 +120,7 @@ export default function App() {
               </div>
               <div className="rows">
                 {jobs.map((job) => (
-                  <JobCard key={job.id} initial={job} />
+                  <JobCard key={job.id} initial={job} autoSave={started.has(job.id)} />
                 ))}
               </div>
             </div>
