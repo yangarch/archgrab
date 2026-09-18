@@ -64,6 +64,8 @@ export default function App() {
       const { job_id } = await api.createJob({
         url: resolved.url,
         item_ids: itemIds.length === resolved.info.items.length ? null : itemIds,
+        // 낱개로 저장할 거면 zip 을 만들 필요가 없다
+        bundle: mode === 'zip',
       })
       const job = await api.getJob(job_id)
       setActiveJob((current) => ({ ...current, [key]: job_id }))

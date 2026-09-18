@@ -36,7 +36,7 @@ async def create_job(payload: JobCreate) -> JobCreated:
         format_ids=payload.format_ids or {},
         audio_only=payload.audio_only,
     )
-    return JobCreated(job_id=await manager.submit(parsed, selection))
+    return JobCreated(job_id=await manager.submit(parsed, selection, bundle=payload.bundle))
 
 
 @router.get("", response_model=list[Job])

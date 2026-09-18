@@ -22,7 +22,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from app.config import get_settings
 from app.core import secrets_store
+from app.core.cache import media_cache
 from app.core.errors import ArchGrabError, ErrorCode
 from app.core.models import FormatOption, MediaInfo, MediaItem
 from app.core.url import Kind, ParsedUrl
@@ -162,14 +164,58 @@ class InstagramExtractor:
         cookies: Path | None,
         progress: ProgressCallback,
     ) -> list[Path]:
-        # 서명 URL 은 만료되므로 작업 시점에 다시 받는다
-        media = instagram_web.probe(parsed, cookies)
-        wanted = [item for item in media.items if selection.wants(item.id)] or media.items
+        """방금 해석한 결과를 재사용한다. 실패하면 다시 추출해 한 번 더 시도한다.
 
-        pairs: list[tuple[str, str]] = []
+        예전에는 작업마다 GraphQL 을 다시 호출해서(페이지 fetch → ruling →
+        graphql) 버튼을 누르고 2~4초를 그냥 기다렸다. 캐시된 MediaInfo 를 쓰면
+        그 시간이 사라진다. 다만 담긴 CDN 주소는 서명·만료가 붙어 있으므로,
+        받다가 실패하면 캐시를 버리고 신선한 주소로 재시도한다.
+        """
+        max_age = get_settings().resolve_cache_seconds
+
+        for attempt in (0, 1):
+            media = None if attempt else self._cached_media(parsed, cookies, max_age)
+            if media is None:
+                media = instagram_web.probe(parsed, cookies)
+                media_cache.put(parsed.cache_key, media)
+
+            pairs = self._pairs_for(parsed, media, selection)
+            if not pairs:
+                raise ArchGrabError(ErrorCode.ENGINE_FAILED, "내려받을 포맷을 찾지 못했습니다.")
+
+            try:
+                return _fetch_pairs(pairs, dest, cookies, progress)
+            except ArchGrabError:
+                if attempt:
+                    raise
+                # 만료된 주소였을 수 있다 — 캐시를 버리고 다시 추출한다
+                media_cache.invalidate(parsed.cache_key)
+
+        raise ArchGrabError(ErrorCode.ENGINE_FAILED)
+
+    @staticmethod
+    def _cached_media(parsed: ParsedUrl, cookies: Path | None, max_age: float) -> MediaInfo | None:
+        cached = media_cache.get(parsed.cache_key, max_age)
+        if cached is None:
+            return None
+        # 쿠키 유무가 달라지면 추출 결과도 달라진다 (비공개·스토리)
+        if cached.used_cookies != (cookies is not None):
+            return None
+        # 다른 엔진이 담아둔 결과는 url 이 없을 수 있다
+        if cached.engine != instagram_web.NAME:
+            return None
+        return cached
+
+    @staticmethod
+    def _pairs_for(
+        parsed: ParsedUrl, media: MediaInfo, selection: Selection
+    ) -> list[tuple[str, str]]:
+        wanted = [item for item in media.items if selection.wants(item.id)] or media.items
         # 작업에 담긴 개수가 아니라 게시글의 항목 수로 판단한다. 15장 중 한 장만
         # 받아도 번호가 붙어야 여러 번 받았을 때 파일명이 겹치지 않는다.
         multiple = len(media.items) > 1
+
+        pairs: list[tuple[str, str]] = []
         for item in wanted:
             chosen = _pick_format(item, selection.format_for(item.id))
             if chosen is None or not chosen.url:
@@ -178,10 +224,7 @@ class InstagramExtractor:
                 _item_filename(parsed, media, item, chosen, numbered=multiple),
                 chosen.url,
             ))
-
-        if not pairs:
-            raise ArchGrabError(ErrorCode.ENGINE_FAILED, "내려받을 포맷을 찾지 못했습니다.")
-        return _fetch_pairs(pairs, dest, cookies, progress)
+        return pairs
 
     def _via_gallerydl(
         self,

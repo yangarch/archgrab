@@ -180,3 +180,21 @@ def test_reaper_removes_expired_job_files(client: TestClient) -> None:
     assert asyncio.run(expire_and_sweep()) >= 1
     assert not job_dir.exists()
     assert client.get(f"/api/jobs/{job_id}").status_code == 404
+
+
+def test_bundle_false_skips_the_zip(client: TestClient) -> None:
+    """낱개로 저장할 작업은 zip 을 만들지 않는다 — 쓰이지 않는데 디스크만 두 배."""
+    job = _wait(
+        client,
+        client.post("/api/jobs", json={"url": POST_URL, "bundle": False}).json()["job_id"],
+    )
+    names = [f["name"] for f in job["files"]]
+    assert job["status"] == "done"
+    assert len(names) == 3
+    assert not any(n.endswith(".zip") for n in names), names
+
+
+def test_bundle_defaults_to_true(client: TestClient) -> None:
+    """요청에 bundle 이 없으면 기존 동작(zip 포함)을 유지한다."""
+    job = _wait(client, client.post("/api/jobs", json={"url": POST_URL}).json()["job_id"])
+    assert sum(1 for f in job["files"] if f["name"].endswith(".zip")) == 1

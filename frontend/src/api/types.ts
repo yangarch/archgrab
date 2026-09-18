@@ -101,6 +101,8 @@ export interface JobRequest {
   item_ids?: string[] | null
   format_ids?: Record<string, string> | null
   audio_only?: boolean
+  /** 여러 개일 때 서버가 zip 도 만들지. 낱개 저장이면 불필요하다. */
+  bundle?: boolean
 }
 
 /** 버튼에 표시할 다운로드 진행 상태 */

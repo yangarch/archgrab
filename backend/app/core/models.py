@@ -131,6 +131,9 @@ class JobCreate(BaseModel):
     item_ids: list[str] | None = None          # None 이면 전체
     format_ids: dict[str, str] | None = None   # item_id → format_id
     audio_only: bool = False
+    # 여러 개를 받을 때 zip 도 만들지. 클라이언트가 낱개로 저장한다면 zip 은
+    # 쓰이지 않고 디스크만 두 배로 잡는다 (TTL 동안).
+    bundle: bool = True
 
 
 class JobFile(BaseModel):

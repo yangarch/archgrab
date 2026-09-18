@@ -347,3 +347,67 @@ def test_carousel_items_are_numbered_even_when_downloaded_one_at_a_time() -> Non
         _item_filename(parsed, media, third, fmt, numbered=True),
     }
     assert names == {"instagram_someone_ABC_1.jpg", "instagram_someone_ABC_3.jpg"}
+
+
+class TestDownloadCacheReuse:
+    """작업마다 GraphQL 을 다시 호출하면 버튼을 누르고 2~4초를 기다린다.
+
+    방금 해석한 결과를 재사용해 그 시간을 없앤다. 단 담긴 CDN 주소는 서명·만료가
+    붙어 있으므로, 재사용 조건을 좁게 잡고 실패 시 재추출로 받쳐야 한다.
+    """
+
+    def _media(self, *, used_cookies: bool, engine: str):  # noqa: ANN202
+        from app.core.models import MediaInfo
+        from app.core.url import Kind, Platform
+
+        return MediaInfo(
+            platform=Platform.INSTAGRAM, kind=Kind.POST,
+            source_url="https://www.instagram.com/p/ABC/", key="ABC",
+            engine=engine, used_cookies=used_cookies,
+        )
+
+    def _parsed(self):  # noqa: ANN202
+        from app.core.url import Kind, ParsedUrl, Platform
+
+        return ParsedUrl(Platform.INSTAGRAM, Kind.POST, "ABC",
+                         "https://www.instagram.com/p/ABC/")
+
+    def test_fresh_entry_is_reused(self) -> None:
+        from app.core.cache import media_cache
+        from app.extractors.instagram import InstagramExtractor, WEB
+
+        media_cache.clear()
+        parsed = self._parsed()
+        media_cache.put(parsed.cache_key, self._media(used_cookies=False, engine=WEB))
+        assert InstagramExtractor._cached_media(parsed, None, 600) is not None
+
+    def test_cookie_state_mismatch_is_not_reused(self) -> None:
+        """쿠키가 생기면 비공개·스토리에서 추출 결과가 달라진다."""
+        from pathlib import Path
+
+        from app.core.cache import media_cache
+        from app.extractors.instagram import InstagramExtractor, WEB
+
+        media_cache.clear()
+        parsed = self._parsed()
+        media_cache.put(parsed.cache_key, self._media(used_cookies=False, engine=WEB))
+        assert InstagramExtractor._cached_media(parsed, Path("/tmp/c.txt"), 600) is None
+
+    def test_other_engines_result_is_not_reused(self) -> None:
+        """gallery-dl 이 담아둔 결과에는 web 경로가 기대하는 url 이 없을 수 있다."""
+        from app.core.cache import media_cache
+        from app.extractors.instagram import GALLERY_DL, InstagramExtractor
+
+        media_cache.clear()
+        parsed = self._parsed()
+        media_cache.put(parsed.cache_key, self._media(used_cookies=False, engine=GALLERY_DL))
+        assert InstagramExtractor._cached_media(parsed, None, 600) is None
+
+    def test_expired_entry_is_not_reused(self) -> None:
+        from app.core.cache import media_cache
+        from app.extractors.instagram import InstagramExtractor, WEB
+
+        media_cache.clear()
+        parsed = self._parsed()
+        media_cache.put(parsed.cache_key, self._media(used_cookies=False, engine=WEB))
+        assert InstagramExtractor._cached_media(parsed, None, -1) is None

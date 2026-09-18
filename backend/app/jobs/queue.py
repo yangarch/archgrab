@@ -33,7 +33,7 @@ _DB_INTERVAL = 1.0
 
 
 class JobManager:
-    JobItem = tuple[str, ParsedUrl, Selection]
+    JobItem = tuple[str, ParsedUrl, Selection, bool]
 
     def __init__(self) -> None:
         self._queue: asyncio.Queue[JobManager.JobItem] | None = None
@@ -65,13 +65,15 @@ class JobManager:
         self._queue = None
 
     # ---- 제출 / 구독 -----------------------------------------------------
-    async def submit(self, parsed: ParsedUrl, selection: Selection) -> str:
+    async def submit(
+        self, parsed: ParsedUrl, selection: Selection, *, bundle: bool = True
+    ) -> str:
         registry.get_extractor(parsed.platform)      # 미지원이면 여기서 즉시 거절
         if self._queue is None:
             raise ArchGrabError(ErrorCode.INTERNAL, "작업 큐가 아직 기동되지 않았습니다.")
         job_id = uuid.uuid4().hex
         await store.create(job_id, parsed.url, parsed.platform)
-        await self._queue.put((job_id, parsed, selection))
+        await self._queue.put((job_id, parsed, selection, bundle))
         return job_id
 
     def subscribe(self, job_id: str) -> asyncio.Queue[dict[str, Any]]:
@@ -106,9 +108,9 @@ class JobManager:
     # ---- 실행 ------------------------------------------------------------
     async def _worker_loop(self, queue: asyncio.Queue[JobItem]) -> None:
         while True:
-            job_id, parsed, selection = await queue.get()
+            job_id, parsed, selection, bundle = await queue.get()
             try:
-                await self._run(job_id, parsed, selection)
+                await self._run(job_id, parsed, selection, bundle=bundle)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -117,7 +119,9 @@ class JobManager:
             finally:
                 queue.task_done()
 
-    async def _run(self, job_id: str, parsed: ParsedUrl, selection: Selection) -> None:
+    async def _run(
+        self, job_id: str, parsed: ParsedUrl, selection: Selection, *, bundle: bool = True
+    ) -> None:
         await store.update(job_id, status=JobStatus.DOWNLOADING)
         await self._publish_state(job_id)
 
@@ -157,7 +161,9 @@ class JobManager:
         await store.update(job_id, status=JobStatus.PACKAGING)
         await self._publish_state(job_id)
 
-        if len(paths) > 1:
+        # 낱개로 저장할 작업이면 zip 을 만들지 않는다 — 쓰이지 않는데 TTL 동안
+        # 디스크를 두 배로 잡는다.
+        if bundle and len(paths) > 1:
             base = f"{parsed.platform.value}_{parsed.username or parsed.key}"
             paths = [*paths, await asyncio.to_thread(packager.make_zip, dest, base, paths)]
 
