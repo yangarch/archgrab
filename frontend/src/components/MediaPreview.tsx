@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react'
 
-import type { DownloadState, MediaInfo, MediaItem } from '../api/types'
+import type { DownloadState, MediaInfo, MediaItem, SaveMode } from '../api/types'
 
-/** 한번에 받기 버튼의 진행 상태 키 (항목 id 와 섞이지 않는 이름) */
-export const BULK_KEY = '__bulk__'
+/** 일괄 버튼의 진행 상태 키 (항목 id 와 섞이지 않는 이름) */
+export const BULK_ZIP_KEY = '__bulk_zip__'
+export const BULK_EACH_KEY = '__bulk_each__'
 
 interface Props {
   info: MediaInfo
   /** 요청키 → 진행 상태 */
   downloads: Record<string, DownloadState>
-  onDownload: (itemIds: string[], key: string) => void
+  onDownload: (itemIds: string[], key: string, mode: SaveMode) => void
 }
 
 function duration(seconds?: number | null) {
@@ -64,7 +65,9 @@ export default function MediaPreview({ info, downloads, onDownload }: Props) {
   const allSelected = chosen.length === allIds.length && allIds.length > 0
   const videoCount = info.items.filter((item) => item.type === 'video').length
 
-  const bulk = buttonView(downloads[BULK_KEY], `선택한 ${chosen.length}개 한번에`)
+  const asEach = buttonView(downloads[BULK_EACH_KEY], `낱개로 ${chosen.length}개`)
+  const asZip = buttonView(downloads[BULK_ZIP_KEY], `zip으로 ${chosen.length}개`)
+  const anyBulkBusy = asEach.busy || asZip.busy
 
   return (
     <div className="card">
@@ -92,16 +95,34 @@ export default function MediaPreview({ info, downloads, onDownload }: Props) {
           {allSelected ? '전체 해제' : '전체 선택'}
         </button>
         <span className="spacer" />
+        {/* 낱개: 파일 그대로 여러 개. 4장쯤이면 압축을 풀 이유가 없다. */}
         <button
-          className={`primary${bulk.tone}`}
-          disabled={bulk.busy || chosen.length === 0}
-          aria-busy={bulk.busy}
-          onClick={() => onDownload(chosen, BULK_KEY)}
+          className={`small${asEach.tone}`}
+          disabled={anyBulkBusy || chosen.length === 0}
+          aria-busy={asEach.busy}
+          onClick={() => onDownload(chosen, BULK_EACH_KEY, 'each')}
         >
-          {bulk.busy && <span className="spinner" aria-hidden="true" />}
-          {bulk.text}
+          {asEach.busy && <span className="spinner" aria-hidden="true" />}
+          {asEach.text}
         </button>
+        {/* zip 은 2개 이상일 때만 의미가 있다 */}
+        {chosen.length > 1 && (
+          <button
+            className={`primary${asZip.tone}`}
+            disabled={anyBulkBusy}
+            aria-busy={asZip.busy}
+            onClick={() => onDownload(chosen, BULK_ZIP_KEY, 'zip')}
+          >
+            {asZip.busy && <span className="spinner" aria-hidden="true" />}
+            {asZip.text}
+          </button>
+        )}
       </div>
+      {chosen.length > 3 && (
+        <div className="muted small" style={{ margin: '-4px 0 10px' }}>
+          낱개로 여러 개를 받으면 브라우저가 “여러 파일 다운로드” 허용을 물을 수 있습니다.
+        </div>
+      )}
 
       <div className="grid">
         {info.items.map((item) => {
@@ -145,7 +166,7 @@ export default function MediaPreview({ info, downloads, onDownload }: Props) {
                   className={`small dl${view.tone}`}
                   disabled={view.busy}
                   aria-busy={view.busy}
-                  onClick={() => onDownload([item.id], item.id)}
+                  onClick={() => onDownload([item.id], item.id, 'each')}
                 >
                   {view.busy && <span className="spinner" aria-hidden="true" />}
                   {view.text}

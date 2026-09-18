@@ -108,3 +108,6 @@ export interface DownloadState {
   status: 'starting' | 'running' | 'done' | 'error'
   percent: number
 }
+
+/** 여러 항목을 받을 때 브라우저에 어떻게 저장할지 */
+export type SaveMode = 'zip' | 'each'

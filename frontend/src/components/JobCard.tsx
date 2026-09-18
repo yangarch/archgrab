@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useJobStream } from '../hooks/useJobStream'
-import type { Job, JobStatus } from '../api/types'
+import type { Job, JobStatus, SaveMode } from '../api/types'
 
 const STATUS_LABEL: Record<string, string> = {
   queued: '대기 중',
@@ -31,14 +31,16 @@ interface Props {
   autoSave?: boolean
   /** 상태를 올려보내 누른 버튼이 진행률을 보여줄 수 있게 한다 */
   onStatus?: (jobId: string, status: JobStatus, percent: number) => void
+  /** 'zip' = zip 하나만, 'each' = 낱개 전부 */
+  saveMode?: SaveMode
 }
 
-export default function JobCard({ initial, autoSave = false, onStatus }: Props) {
+export default function JobCard({ initial, autoSave = false, onStatus, saveMode = 'zip' }: Props) {
   const job = useJobStream(initial)
   // ref 는 중복 발동 방지용(StrictMode 는 effect 를 두 번 돌린다),
   // state 는 화면 갱신용. ref 만 쓰면 안내 문구가 리렌더될 때까지 안 뜬다.
   const fired = useRef(false)
-  const [saved, setSaved] = useState(false)
+  const [saved, setSaved] = useState(0)
 
   useEffect(() => {
     onStatus?.(job.id, job.status, job.progress.percent)
@@ -46,19 +48,32 @@ export default function JobCard({ initial, autoSave = false, onStatus }: Props) 
 
   useEffect(() => {
     if (!autoSave || fired.current || job.status !== 'done') return
-    // 여러 항목을 묶은 작업은 zip 하나만, 단일 항목은 그 파일을 저장한다
+
+    const singles = job.files.filter((f) => !f.name.endsWith('.zip'))
     const zip = job.files.find((f) => f.name.endsWith('.zip'))
-    const target = zip ?? job.files[0]
-    if (!target) return
+    // 'each' 는 낱개 전부, 'zip' 은 zip 하나(없으면 단일 파일)
+    const targets =
+      saveMode === 'each' && singles.length > 0
+        ? singles
+        : [zip ?? job.files[0]].filter(Boolean)
+    if (targets.length === 0) return
+
     fired.current = true
-    const link = document.createElement('a')
-    link.href = `/api/files/${target.token}`
-    link.download = target.name
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    setSaved(true)
-  }, [autoSave, job.status, job.files])
+    const save = (file: (typeof job.files)[number]) => {
+      const link = document.createElement('a')
+      link.href = `/api/files/${file.token}`
+      link.download = file.name
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+    }
+    // 연달아 쏘면 브라우저가 일부를 흘린다 — 간격을 둔다
+    targets.forEach((file, index) => {
+      if (index === 0) save(file)
+      else window.setTimeout(() => save(file), index * 350)
+    })
+    setSaved(targets.length)
+  }, [autoSave, job.status, job.files, saveMode])
   const active = job.status === 'downloading' || job.status === 'packaging'
   const percent = job.status === 'done' ? 100 : job.progress.percent
 
@@ -91,9 +106,12 @@ export default function JobCard({ initial, autoSave = false, onStatus }: Props) 
 
       {job.status === 'done' && job.files.length > 0 && (
         <div className="files" style={{ marginTop: 10 }}>
-          {saved && (
+          {saved > 0 && (
             <div className="muted small">
-              브라우저 다운로드 폴더에 저장했습니다. 다시 받으려면 아래를 누르세요.
+              {saved === 1
+                ? '브라우저 다운로드 폴더에 저장했습니다.'
+                : `${saved}개를 브라우저 다운로드 폴더에 저장했습니다.`}{' '}
+              다시 받으려면 아래를 누르세요.
             </div>
           )}
           {job.files.map((file) => (

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { ApiError, api } from './api/client'
-import type { DownloadState, Job, JobStatus, MediaInfo } from './api/types'
+import type { DownloadState, Job, JobStatus, MediaInfo, SaveMode } from './api/types'
 import CookieSettings from './components/CookieSettings'
 import JobCard from './components/JobCard'
 import LoginGate from './components/LoginGate'
@@ -26,6 +26,8 @@ export default function App() {
      덮어쓴다(두 번째 클릭에 즉시 "저장됨"이 뜨는 거짓 피드백). 키마다 최신
      작업만 남겨 오래된 보고를 무시한다. */
   const [activeJob, setActiveJob] = useState<Record<string, string>>({})
+  // 작업 id → 브라우저 저장 방식 (zip 하나 vs 낱개 전부)
+  const [saveModes, setSaveModes] = useState<Record<string, SaveMode>>({})
   const [jobError, setJobError] = useState<string | null>(null)
 
   const refreshSession = useCallback(async () => {
@@ -54,7 +56,7 @@ export default function App() {
     })
   }, [])
 
-  async function startDownload(itemIds: string[], key: string) {
+  async function startDownload(itemIds: string[], key: string, mode: SaveMode = 'zip') {
     if (!resolved) return
     setJobError(null)
     mark(key, { status: 'starting', percent: 0 })
@@ -65,6 +67,7 @@ export default function App() {
       })
       const job = await api.getJob(job_id)
       setActiveJob((current) => ({ ...current, [key]: job_id }))
+      setSaveModes((current) => ({ ...current, [job_id]: mode }))
       setStarted((current) => new Set(current).add(job_id))
       setJobs((current) => [job, ...current])
       mark(key, { status: 'running', percent: 0 })
@@ -161,6 +164,7 @@ export default function App() {
                     initial={job}
                     autoSave={started.has(job.id)}
                     onStatus={handleJobStatus}
+                    saveMode={saveModes[job.id] ?? 'zip'}
                   />
                 ))}
               </div>
