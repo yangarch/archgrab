@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from app.core import secrets_store
 from app.core.errors import ArchGrabError, ErrorCode
 from app.core.models import FormatOption, MediaInfo, MediaItem
 from app.core.url import Kind, ParsedUrl
-from app.extractors import gallerydl_engine, ytdlp_engine
+from app.extractors import gallerydl_engine, instagram_web, ytdlp_engine
 from app.extractors.base import ProgressCallback, ProgressEvent, Selection, noop_progress
 from app.extractors.gallerydl_engine import GalleryEntry
 from app.media import fetcher
@@ -40,12 +41,40 @@ ORIGINAL_FORMAT_ID = "original"
 COOKIE_REQUIRED_KINDS = frozenset({Kind.STORY, Kind.HIGHLIGHT})
 
 GALLERY_DL = "gallery-dl"
+WEB = "instagram-web"
 YT_DLP = "yt-dlp"
+
+# yt-dlp 가 이미지 항목에서 내는 문구. 이걸 그냥 흘리면 "엔진을 업데이트하세요"라는
+# 엉뚱한 안내가 나간다 — 업데이트로 해결되는 문제가 아니다.
+_NO_VIDEO_FORMATS = re.compile(r"no video formats", re.I)
+
+IMAGE_NEEDS_COOKIES = (
+    "이미지 게시글은 쿠키가 필요합니다. yt-dlp 는 인스타 이미지를 추출하지 못하고"
+    "(No video formats found), gallery-dl 은 쿠키 없이 접근할 수 없습니다. "
+    "설정에서 인스타그램 쿠키를 등록해주세요."
+)
 
 
 def engine_order(has_cookies: bool) -> tuple[str, ...]:
-    """쿠키 유무로 엔진 순서를 정한다. 모듈 독스트링에 근거를 적어뒀다."""
-    return (GALLERY_DL, YT_DLP) if has_cookies else (YT_DLP,)
+    """엔진 순서.
+
+    `instagram-web` 이 항상 먼저다 — 비로그인 GraphQL 을 직접 읽어 캐러셀의
+    이미지·동영상을 **전부** 열거하는 유일한 경로다. yt-dlp 는 같은 응답을
+    쓰면서도 이미지를 버리고, gallery-dl 은 익명 접근이 안 된다.
+
+    쿠키가 있으면 gallery-dl 을 뒤에 둔다 — 비공개·스토리처럼 web 경로가
+    게이팅되는 경우를 받쳐준다.
+    """
+    if has_cookies:
+        return (WEB, GALLERY_DL, YT_DLP)
+    return (WEB, YT_DLP)
+
+
+def _clarify(exc: ArchGrabError, cookies: Path | None) -> ArchGrabError:
+    """엔진 원문이 오해를 부르는 경우 메시지를 바꿔준다."""
+    if cookies is None and _NO_VIDEO_FORMATS.search(exc.detail or ""):
+        return ArchGrabError(ErrorCode.LOGIN_REQUIRED, IMAGE_NEEDS_COOKIES, detail=exc.detail)
+    return exc
 
 
 def _pick_format(item: MediaItem, wanted_id: str | None) -> FormatOption | None:
@@ -73,17 +102,33 @@ class InstagramExtractor:
 
             for engine in engine_order(cookies is not None):
                 try:
+                    if engine == WEB:
+                        return instagram_web.probe(parsed, cookies)
                     if engine == GALLERY_DL:
                         entries, post = gallerydl_engine.dump(parsed.url, cookies)
                         return _to_media_info(parsed, entries, post, used_cookies=True)
-                    info = ytdlp_engine.extract(parsed.url, cookies)
-                    return ytdlp_engine.to_media_info(
-                        parsed, info, used_cookies=cookies is not None
-                    )
+                    return self._probe_ytdlp(parsed, cookies)
                 except ArchGrabError as exc:
-                    failures.append(exc)
+                    failures.append(_clarify(exc, cookies))
 
             raise failures[0]
+
+    def _probe_ytdlp(self, parsed: ParsedUrl, cookies: Path | None) -> MediaInfo:
+        info = ytdlp_engine.extract(parsed.url, cookies)
+        media = ytdlp_engine.to_media_info(parsed, info, used_cookies=cookies is not None)
+
+        # 전부 못 가져왔으면 보여줄 게 없다 — 이미지 전용 게시글이 이 경우다.
+        if not media.items:
+            raise ArchGrabError(ErrorCode.LOGIN_REQUIRED, IMAGE_NEEDS_COOKIES)
+
+        # 일부만 가져왔으면 반드시 알린다. 조용히 버리면 사용자는 15개 중 3개만
+        # 보고도 나머지가 사라진 줄 모른다.
+        if media.missing_items:
+            media.notice = (
+                f"{media.missing_items}개 항목을 가져오지 못했습니다 (이미지 항목). "
+                "쿠키를 등록하면 함께 받을 수 있습니다."
+            )
+        return media
 
     # ---- 내려받기 --------------------------------------------------------
     def download(
@@ -99,13 +144,44 @@ class InstagramExtractor:
 
             for engine in engine_order(cookies is not None):
                 try:
+                    if engine == WEB:
+                        return self._via_web(parsed, selection, dest, cookies, progress)
                     if engine == GALLERY_DL:
                         return self._via_gallerydl(parsed, selection, dest, cookies, progress)
                     return self._via_ytdlp(parsed, selection, dest, cookies, progress)
                 except ArchGrabError as exc:
-                    failures.append(exc)
+                    failures.append(_clarify(exc, cookies))
 
             raise failures[0]
+
+    def _via_web(
+        self,
+        parsed: ParsedUrl,
+        selection: Selection,
+        dest: Path,
+        cookies: Path | None,
+        progress: ProgressCallback,
+    ) -> list[Path]:
+        # 서명 URL 은 만료되므로 작업 시점에 다시 받는다
+        media = instagram_web.probe(parsed, cookies)
+        wanted = [item for item in media.items if selection.wants(item.id)] or media.items
+
+        pairs: list[tuple[str, str]] = []
+        # 작업에 담긴 개수가 아니라 게시글의 항목 수로 판단한다. 15장 중 한 장만
+        # 받아도 번호가 붙어야 여러 번 받았을 때 파일명이 겹치지 않는다.
+        multiple = len(media.items) > 1
+        for item in wanted:
+            chosen = _pick_format(item, selection.format_for(item.id))
+            if chosen is None or not chosen.url:
+                continue
+            pairs.append((
+                _item_filename(parsed, media, item, chosen, numbered=multiple),
+                chosen.url,
+            ))
+
+        if not pairs:
+            raise ArchGrabError(ErrorCode.ENGINE_FAILED, "내려받을 포맷을 찾지 못했습니다.")
+        return _fetch_pairs(pairs, dest, cookies, progress)
 
     def _via_gallerydl(
         self,
@@ -170,7 +246,7 @@ class InstagramExtractor:
         multiple = len(targets) > 1
         pairs = [
             (
-                _ytdlp_filename(parsed, media, item, fmt, numbered=multiple),
+                _item_filename(parsed, media, item, fmt, numbered=multiple),
                 str(fmt.url),
             )
             for item, fmt in targets
@@ -234,7 +310,7 @@ def _outtmpl(parsed: ParsedUrl, media: MediaInfo) -> str:
     return f"{stem}.%(ext)s"
 
 
-def _ytdlp_filename(
+def _item_filename(
     parsed: ParsedUrl,
     media: MediaInfo,
     item: MediaItem,

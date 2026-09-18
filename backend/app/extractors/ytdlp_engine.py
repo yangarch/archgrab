@@ -199,9 +199,14 @@ def _media_type(entry: dict[str, Any], formats: list[FormatOption]) -> str:
 
 def to_media_info(parsed: ParsedUrl, info: dict[str, Any], *, used_cookies: bool) -> MediaInfo:
     entries = info.get("entries")
-    items_source: list[dict[str, Any]] = (
-        [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else [info]
-    )
+    if isinstance(entries, list):
+        items_source: list[dict[str, Any]] = [e for e in entries if isinstance(e, dict)]
+        # 추출에 실패한 항목은 None 으로 온다. 인스타 카러셀의 이미지 항목이
+        # 대표적이다 — yt-dlp 는 "No video formats found!" 로 실패한다.
+        missing = len(entries) - len(items_source)
+    else:
+        items_source = [info]
+        missing = 0
 
     items = []
     for index, entry in enumerate(items_source):
@@ -232,6 +237,7 @@ def to_media_info(parsed: ParsedUrl, info: dict[str, Any], *, used_cookies: bool
         items=items,
         engine=NAME,
         used_cookies=used_cookies,
+        missing_items=missing,
     )
 
 

@@ -11,17 +11,23 @@ import pytest
 
 from app.core.models import FormatOption, MediaItem
 from app.extractors import ytdlp_engine
-from app.extractors.instagram import GALLERY_DL, YT_DLP, _pick_format, engine_order
+from app.extractors.instagram import GALLERY_DL, WEB, YT_DLP, _pick_format, engine_order
 
 
 class TestEngineOrder:
-    def test_without_cookies_only_ytdlp(self) -> None:
-        """gallery-dl 은 익명 인스타 접근이 불가능하므로 아예 부르지 않는다."""
-        assert engine_order(has_cookies=False) == (YT_DLP,)
+    def test_web_engine_is_always_first(self) -> None:
+        """비로그인 GraphQL 을 직접 읽는 경로가 캐러셀을 전부 열거하는 유일한 방법이다."""
+        assert engine_order(has_cookies=False)[0] == WEB
+        assert engine_order(has_cookies=True)[0] == WEB
 
-    def test_with_cookies_gallerydl_first(self) -> None:
-        """쿠키가 있으면 이미지·캐러셀 메타데이터가 정확한 gallery-dl 을 먼저 쓴다."""
-        assert engine_order(has_cookies=True) == (GALLERY_DL, YT_DLP)
+    def test_without_cookies_gallerydl_is_not_called(self) -> None:
+        """gallery-dl 은 익명 인스타 접근이 불가능하므로 쿠키 없이는 부르지 않는다."""
+        assert GALLERY_DL not in engine_order(has_cookies=False)
+        assert engine_order(has_cookies=False) == (WEB, YT_DLP)
+
+    def test_with_cookies_gallerydl_backs_up_the_web_engine(self) -> None:
+        """비공개·스토리처럼 web 경로가 게이팅되는 경우를 gallery-dl 이 받쳐준다."""
+        assert engine_order(has_cookies=True) == (WEB, GALLERY_DL, YT_DLP)
 
 
 class TestImageFormatSynthesis:
@@ -207,3 +213,137 @@ def test_dimensionless_formats_are_distinguishable() -> None:
     }
     labels = [f.label for f in ytdlp_engine._formats(entry)]
     assert len(set(labels)) == 2, labels
+
+
+class TestInstagramWebNormalization:
+    """비로그인 GraphQL 응답 → MediaInfo. 실제 응답에서 확인한 구조를 고정한다.
+
+    이 경로가 존재하는 이유: yt-dlp 는 같은 응답을 쓰면서도 이미지 항목을 버려서
+    15장 캐러셀에서 동영상 3개만 남는다.
+    """
+
+    PAYLOAD = {
+        "media_type": 8,
+        "code": "DdG0csnmPlQ",
+        "taken_at": 1700000000,
+        "caption": {"text": "가을 나들이"},
+        "user": {"username": "someone", "full_name": "어떤 사람"},
+        "carousel_media": [
+            {
+                "media_type": 1,
+                "original_width": 3072, "original_height": 4096,
+                "display_uri": "https://cdn.example/disp.jpg",
+                "image_versions2": {"candidates": [
+                    {"url": "https://cdn.example/x.jpg?stp=dst-jpegr_e35_p1080x1080_tt6"},
+                    {"url": "https://cdn.example/x.jpg?stp=dst-jpegr_e35_tt6"},
+                    {"url": "https://cdn.example/x.jpg?stp=dst-jpegr_e35_s320x320_tt6"},
+                ]},
+            },
+            {
+                "media_type": 2,
+                "original_width": 720, "original_height": 1280,
+                "has_audio": True,
+                "display_uri": "https://cdn.example/poster.jpg",
+                "video_versions": [
+                    {"type": 103, "url": "https://cdn.example/low.mp4"},
+                    {"type": 101, "url": "https://cdn.example/best.mp4"},
+                    {"type": 102, "url": "https://cdn.example/mid.mp4"},
+                ],
+            },
+        ],
+    }
+
+    def _info(self):  # noqa: ANN202
+        from app.core.url import Kind, ParsedUrl, Platform
+        from app.extractors import instagram_web
+
+        parsed = ParsedUrl(Platform.INSTAGRAM, Kind.POST, "DdG0csnmPlQ",
+                           "https://www.instagram.com/p/DdG0csnmPlQ/")
+        return instagram_web.to_media_info(parsed, self.PAYLOAD, used_cookies=False)
+
+    def test_every_carousel_item_is_kept(self) -> None:
+        info = self._info()
+        assert len(info.items) == 2
+        assert info.missing_items == 0
+
+    def test_types_are_labelled_correctly(self) -> None:
+        assert [i.type for i in self._info().items] == ["image", "video"]
+
+    def test_image_uses_the_unsized_candidate_as_original(self) -> None:
+        """stp 에 크기 토큰이 없는 후보가 원본이다 (실측: 3072x4096)."""
+        image = self._info().items[0]
+        assert image.formats[0].url.endswith("stp=dst-jpegr_e35_tt6")
+        assert (image.formats[0].width, image.formats[0].height) == (3072, 4096)
+        assert image.formats[0].ext == "jpg"
+
+    def test_video_versions_are_sorted_best_first(self) -> None:
+        """type 이 작을수록 고화질. progressive mp4 라 mux 가 필요 없다."""
+        video = self._info().items[1]
+        assert [f.id for f in video.formats] == ["101", "102", "103"]
+        assert video.formats[0].url.endswith("best.mp4")
+        assert not video.formats[0].needs_mux
+        assert video.formats[0].acodec == "aac"
+
+    def test_video_never_claims_a_resolution(self) -> None:
+        """노드의 original_* 는 업로드 원본이라 실제 서빙 크기와 다르다.
+
+        실측: 노드가 1080x1440 이라 보고한 항목의 실제 파일은 720x960 이었다.
+        모르는 값을 화면에 적으면 "보이는 것"과 "받는 것"이 어긋난다.
+        """
+        video = self._info().items[1]
+        assert (video.width, video.height) == (None, None)
+        assert (video.formats[0].width, video.formats[0].height) == (None, None)
+
+    def test_identical_renditions_are_merged(self) -> None:
+        """같은 URL 이 여러 type 으로 중복되는 일이 흔하다 (실측: 3개가 동일)."""
+        from app.extractors import instagram_web
+
+        node = {
+            "media_type": 2, "has_audio": False,
+            "video_versions": [
+                {"type": 101, "url": "https://cdn.example/same.mp4"},
+                {"type": 102, "url": "https://cdn.example/same.mp4"},
+                {"type": 103, "url": "https://cdn.example/same.mp4"},
+            ],
+        }
+        formats = instagram_web._video_formats(node)
+        assert len(formats) == 1
+        assert formats[0].acodec == "none"   # 무음 원본도 정상이다
+
+    def test_post_metadata_is_carried(self) -> None:
+        info = self._info()
+        assert info.uploader == "someone"
+        assert info.title == "가을 나들이"
+        assert info.engine == "instagram-web"
+
+    def test_single_item_post_has_no_carousel(self) -> None:
+        from app.core.url import Kind, ParsedUrl, Platform
+        from app.extractors import instagram_web
+
+        single = {k: v for k, v in self.PAYLOAD.items() if k != "carousel_media"}
+        single.update(self.PAYLOAD["carousel_media"][0])
+        parsed = ParsedUrl(Platform.INSTAGRAM, Kind.POST, "X",
+                           "https://www.instagram.com/p/X/")
+        info = instagram_web.to_media_info(parsed, single, used_cookies=False)
+        assert len(info.items) == 1 and info.items[0].type == "image"
+
+
+def test_carousel_items_are_numbered_even_when_downloaded_one_at_a_time() -> None:
+    """15장 중 한 장씩 따로 받아도 파일명이 겹치면 안 된다."""
+    from app.core.models import FormatOption, MediaInfo, MediaItem
+    from app.core.url import Kind, ParsedUrl, Platform
+    from app.extractors.instagram import _item_filename
+
+    parsed = ParsedUrl(Platform.INSTAGRAM, Kind.POST, "ABC",
+                       "https://www.instagram.com/p/ABC/")
+    media = MediaInfo(platform=Platform.INSTAGRAM, kind=Kind.POST,
+                      source_url=parsed.url, key="ABC", uploader="someone")
+    fmt = FormatOption(id="original", ext="jpg")
+    first = MediaItem(id="0", index=0, type="image", formats=[fmt])
+    third = MediaItem(id="2", index=2, type="image", formats=[fmt])
+
+    names = {
+        _item_filename(parsed, media, first, fmt, numbered=True),
+        _item_filename(parsed, media, third, fmt, numbered=True),
+    }
+    assert names == {"instagram_someone_ABC_1.jpg", "instagram_someone_ABC_3.jpg"}

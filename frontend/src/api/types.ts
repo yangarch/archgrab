@@ -43,6 +43,9 @@ export interface MediaInfo {
   items: MediaItem[]
   engine: string
   used_cookies: boolean
+  /** 엔진이 가져오지 못한 항목 수 — 조용히 버리지 않는다 */
+  missing_items: number
+  notice?: string | null
 }
 
 export interface CookieStatus {

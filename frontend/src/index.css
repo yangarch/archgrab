@@ -177,3 +177,24 @@ input:focus-visible, button:focus-visible {
   .row { flex-wrap: wrap; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
 }
+
+/* 항목 타일 — 썸네일은 선택 토글, 아래는 개별 다운로드 */
+.tile { display: flex; flex-direction: column; }
+.thumb-btn {
+  padding: 0; border: 0; background: none; border-radius: 0; display: block; width: 100%;
+}
+.thumb-btn:hover { background: none; }
+.tile-foot {
+  display: flex; align-items: center; gap: 6px; justify-content: space-between;
+  padding: 6px 8px; border-top: 1px solid var(--border);
+}
+.tile-foot > div { flex: 1; min-width: 0; }
+button.dl { padding: 4px 8px; white-space: nowrap; }
+
+.notice {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}

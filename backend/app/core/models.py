@@ -111,6 +111,11 @@ class MediaInfo(BaseModel):
     engine: str = ""
     used_cookies: bool = False
 
+    # 엔진이 가져오지 못한 항목 수. 조용히 버리면 사용자는 15개 중 3개만 보고도
+    # 나머지가 사라진 걸 모른다.
+    missing_items: int = 0
+    notice: str | None = None
+
 
 class JobStatus(StrEnum):
     QUEUED = "queued"
