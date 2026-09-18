@@ -62,33 +62,29 @@ def extract(url: str, cookies: Path | None = None) -> dict[str, Any]:
     return info
 
 
-def _media_type(entry: dict[str, Any]) -> str:
-    if entry.get("_type") == "url" and entry.get("ext") in {"jpg", "jpeg", "png", "webp", "heic"}:
-        return "image"
-    vcodec = entry.get("vcodec")
-    acodec = entry.get("acodec")
-    if entry.get("duration") or (vcodec and vcodec != "none"):
-        return "video"
-    if acodec and acodec != "none":
-        return "audio"
-    if str(entry.get("ext", "")).lower() in {"jpg", "jpeg", "png", "webp", "heic"}:
-        return "image"
-    return "video"
+IMAGE_EXTENSIONS = frozenset({"jpg", "jpeg", "png", "webp", "heic", "avif"})
+STREAMING_PROTOCOLS = ("m3u8", "dash", "mpd", "ism")
 
 
-def _formats(entry: dict[str, Any]) -> list[FormatOption]:
-    raw = entry.get("formats") or []
+def _ext_from_url(url: str) -> str:
+    tail = url.split("?")[0].rsplit(".", 1)
+    return tail[-1].lower() if len(tail) == 2 and len(tail[-1]) <= 5 else "jpg"
+
+
+def _real_formats(entry: dict[str, Any]) -> list[FormatOption]:
+    """yt-dlp 가 준 재생 가능한 스트림만. 스토리보드·더미는 버린다."""
     options: list[FormatOption] = []
-    for fmt in raw:
+    for fmt in entry.get("formats") or []:
         ext = str(fmt.get("ext") or "")
-        if ext in {"mhtml", "none"}:          # 스토리보드·더미
+        url = fmt.get("url")
+        # 스토리보드·더미만 버린다. 코덱 정보 유무로 판단하면 안 된다 —
+        # 인스타의 progressive mp4(video_versions)는 영상+음성이 함께 있는데도
+        # vcodec/acodec 을 둘 다 보고하지 않는다. 그걸 버렸다가 DASH 영상전용을
+        # 받아 무음 파일이 나온 적이 있다.
+        if ext in {"mhtml", "none"} or not url:
             continue
-        vcodec = fmt.get("vcodec")
-        acodec = fmt.get("acodec")
-        if vcodec in {None, "none"} and acodec in {None, "none"}:
-            continue
+        vcodec, acodec = fmt.get("vcodec"), fmt.get("acodec")
         size = fmt.get("filesize")
-        approx = size is None
         options.append(
             FormatOption(
                 id=str(fmt.get("format_id") or ext),
@@ -97,27 +93,108 @@ def _formats(entry: dict[str, Any]) -> list[FormatOption]:
                 height=fmt.get("height"),
                 fps=fmt.get("fps"),
                 filesize=size or fmt.get("filesize_approx"),
-                filesize_approx=approx,
+                filesize_approx=size is None,
                 vcodec=vcodec,
                 acodec=acodec,
-                note=fmt.get("format_note"),
+                # 인스타 progressive 포맷은 해상도·용량을 안 준다. 라벨이 죄다
+                # "mp4" 로 같아 보이지 않도록 최소한 id 로 구분해준다.
+                note=fmt.get("format_note") or (
+                    None if fmt.get("width") else f"#{fmt.get('format_id')}"
+                ),
                 # 영상만 있는 스트림은 음성과 합쳐야 한다 (무손실 mux)
                 needs_mux=bool(vcodec and vcodec != "none" and acodec in {None, "none"}),
+                url=fmt.get("url"),
+                protocol=fmt.get("protocol"),
             )
         )
-    if not options:
-        # 단일 URL 항목 (인스타 이미지 등)
-        options.append(
+    return options
+
+
+def _image_format(entry: dict[str, Any]) -> FormatOption | None:
+    """이미지 게시글용 — yt-dlp 는 이미지를 formats 가 아니라 thumbnails 에 담는다.
+
+    formats 는 video_versions·DASH 에서만 만들어지므로 이미지 게시글에는 내려받을
+    포맷이 없다. 대신 image_versions2 후보가 thumbnails 로 오고, 그 목록에는 원본
+    해상도까지 들어 있다. 가장 큰 후보를 원본으로 집는다.
+    """
+    candidates = [
+        t for t in (entry.get("thumbnails") or [])
+        if isinstance(t, dict) and str(t.get("url") or "").startswith(("http://", "https://"))
+    ]
+    if not candidates:
+        return None
+
+    best = max(candidates, key=lambda t: (t.get("width") or 0) * (t.get("height") or 0))
+    url = str(best["url"])
+    return FormatOption(
+        id="image",
+        ext=_ext_from_url(url),
+        width=best.get("width"),
+        height=best.get("height"),
+        note="원본 이미지",
+        url=url,
+        protocol="https",
+    )
+
+
+def _is_audio_only(option: FormatOption) -> bool:
+    return option.vcodec == "none"
+
+
+def _rank(option: FormatOption) -> tuple:
+    """정렬 키 — 좋은 것이 먼저. 화면의 formats[0] 이 실제로 받는 것과 같아야 한다.
+
+    해상도를 가장 앞에 둔다. 최고 해상도가 DASH 영상전용으로만 제공되는 경우가
+    있는데(인스타에서 흔하다), 그때도 그걸 골라야 한다 — 다운로드 단계에서
+    음성을 무손실로 합친다.
+    """
+    return (
+        not _is_audio_only(option),                    # 음성 전용은 맨 뒤
+        (option.width or 0) * (option.height or 0),    # 해상도 우선
+        option.directly_fetchable,                     # 같은 해상도면 직접 받을 수 있는 쪽
+        not option.needs_mux,                          # 그다음 완결 포맷
+        option.filesize or 0,
+    )
+
+
+def _formats(entry: dict[str, Any]) -> list[FormatOption]:
+    options = _real_formats(entry)
+    if options:
+        return sorted(options, key=_rank, reverse=True)
+
+    image = _image_format(entry)
+    if image:
+        return [image]
+
+    # 단일 URL 항목 (포맷 목록 없이 url 만 오는 경우)
+    url = entry.get("url")
+    if url:
+        return [
             FormatOption(
                 id=str(entry.get("format_id") or "original"),
-                ext=str(entry.get("ext") or "bin"),
+                ext=str(entry.get("ext") or _ext_from_url(str(url))),
                 width=entry.get("width"),
                 height=entry.get("height"),
                 filesize=entry.get("filesize") or entry.get("filesize_approx"),
                 filesize_approx=entry.get("filesize") is None,
+                url=str(url),
+                protocol=entry.get("protocol") or "https",
             )
-        )
-    return options
+        ]
+    return []
+
+
+def _media_type(entry: dict[str, Any], formats: list[FormatOption]) -> str:
+    """포맷을 먼저 보고 판정한다 — 이게 실제로 무엇을 받게 되는지와 일치한다."""
+    if any(f.vcodec and f.vcodec != "none" for f in formats):
+        return "video"
+    if formats and all(f.ext in IMAGE_EXTENSIONS for f in formats):
+        return "image"
+    if any(f.acodec and f.acodec != "none" for f in formats):
+        return "audio"
+    if entry.get("duration"):
+        return "video"
+    return "image" if str(entry.get("ext", "")).lower() in IMAGE_EXTENSIONS else "video"
 
 
 def to_media_info(parsed: ParsedUrl, info: dict[str, Any], *, used_cookies: bool) -> MediaInfo:
@@ -126,20 +203,22 @@ def to_media_info(parsed: ParsedUrl, info: dict[str, Any], *, used_cookies: bool
         [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else [info]
     )
 
-    items = [
-        MediaItem(
-            id=str(index),
-            index=index,
-            type=_media_type(entry),  # type: ignore[arg-type]
-            title=entry.get("title") or entry.get("description"),
-            thumbnail=entry.get("thumbnail"),
-            duration=entry.get("duration"),
-            width=entry.get("width"),
-            height=entry.get("height"),
-            formats=_formats(entry),
+    items = []
+    for index, entry in enumerate(items_source):
+        formats = _formats(entry)
+        items.append(
+            MediaItem(
+                id=str(index),
+                index=index,
+                type=_media_type(entry, formats),  # type: ignore[arg-type]
+                title=entry.get("title") or entry.get("description"),
+                thumbnail=entry.get("thumbnail"),
+                duration=entry.get("duration"),
+                width=entry.get("width"),
+                height=entry.get("height"),
+                formats=formats,
+            )
         )
-        for index, entry in enumerate(items_source)
-    ]
 
     return MediaInfo(
         platform=parsed.platform,
@@ -164,6 +243,7 @@ def download(
     cookies: Path | None = None,
     progress: ProgressCallback | None = None,
     outtmpl: str = "%(title).80B [%(id)s].%(ext)s",
+    format_spec: str | None = None,
 ) -> list[Path]:
     """dest 에 받은 파일 경로 목록. 코덱 변환은 하지 않는다 (mux 만)."""
     produced: list[Path] = []
@@ -190,7 +270,11 @@ def download(
             "progress_hooks": [hook],
             "noplaylist": False,
             # 최고 화질 원본. bv*+ba 는 컨테이너만 합치고 코덱은 건드리지 않는다.
-            "format": "bestaudio/best" if selection.audio_only else "bv*+ba/b",
+            # format_spec 이 오면 사용자가 고른 포맷에 음성만 덧붙인다.
+            "format": (
+                "bestaudio/best" if selection.audio_only
+                else format_spec or "bv*+ba/b"
+            ),
             "merge_output_format": "mp4",
             # 재인코딩 금지 — 합칠 때도 스트림 복사만.
             "postprocessor_args": {"merger": ["-c", "copy"]},

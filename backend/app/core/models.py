@@ -39,6 +39,17 @@ class FormatOption(BaseModel):
     note: str | None = None
     needs_mux: bool = False              # 영상+음성 분리 스트림 (무손실 mux 필요)
 
+    # 원본을 직접 스트리밍할 주소. 서명된 CDN URL 이라 API 응답에는 내보내지 않는다.
+    url: str | None = Field(default=None, exclude=True)
+    protocol: str | None = Field(default=None, exclude=True)
+
+    @property
+    def directly_fetchable(self) -> bool:
+        """우리 fetcher 가 그대로 받을 수 있는가 (DASH·HLS 는 불가)."""
+        if not self.url or not self.url.startswith(("http://", "https://")):
+            return False
+        return (self.protocol or "https") in {"http", "https"}
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def label(self) -> str:
@@ -53,7 +64,9 @@ class FormatOption(BaseModel):
         size = _human_size(self.filesize)
         if size:
             bits.append(f"~{size}" if self.filesize_approx else size)
-        if self.note:
+        if self.needs_mux:
+            bits.append("음성 합침")
+        elif self.note:
             bits.append(self.note)
         return " · ".join(bits)
 
