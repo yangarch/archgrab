@@ -1,0 +1,30 @@
+# 파이썬
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# 프론트
+node_modules/
+frontend/dist/
+backend/static/
+
+# 런타임 — 쿠키와 받은 파일은 절대 커밋하지 않는다.
+# 디렉터리 자체는 .gitkeep 으로 추적한다: 클론 직후에도 존재해야
+# docker compose 의 bind mount 가 root 소유로 새로 만들지 않는다.
+.env
+.dev-password
+data/*
+!data/.gitkeep
+secrets/*
+!secrets/.gitkeep
+*.cookies.enc
+cookies.txt
+
+# OS
+.DS_Store
+
+# Claude Code 개인 오버라이드
+.claude/settings.local.json

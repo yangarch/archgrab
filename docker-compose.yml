@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    image: archgrab:local
+    container_name: archgrab
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # 외부 노출은 Cloudflare Tunnel 등으로 하고, 포트는 루프백에만 묶는다.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data
+      - ./secrets:/secrets
