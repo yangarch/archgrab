@@ -19,8 +19,12 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    http2 on;                                  # nginx 1.25.1+ (이전 버전은 listen 443 ssl http2;)
+    # 구형 문법을 기본으로 둔다 — 양쪽 버전에서 다 동작한다.
+    # nginx 1.25.1+ 는 이 형태에 deprecation 경고만 내고 정상 작동하지만,
+    # 그 이전 버전은 독립 `http2 on;` 지시어를 모르고 기동에 실패한다
+    # (nginx: [emerg] unknown directive "http2").
+    # 1.25.1 이상만 쓴다면 `listen 443 ssl;` + `http2 on;` 으로 바꿔도 된다.
+    listen 443 ssl http2;
     server_name archgrab.example.com;          # ← 도메인으로 바꾸세요
 
     ssl_certificate     /etc/letsencrypt/live/archgrab.example.com/fullchain.pem;
