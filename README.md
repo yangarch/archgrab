@@ -255,9 +255,18 @@ make scan            # 스테이징된 내용 수동 검사
 ## 테스트
 
 ```bash
-make test           # 단위 테스트 (네트워크 제외)
-cd backend && ../.venv/bin/python -m pytest -m network   # 실제 추출까지 (쿠키 필요)
+make test             # 백엔드 + 프론트엔드 전부
+make test-backend     # pytest (네트워크 테스트 제외)
+make test-frontend    # vitest
+cd backend && ../.venv/bin/python -m pytest -m network   # 실제 추출까지
 ```
+
+프론트엔드 테스트는 **jsdom** 에서 돈다. 레이아웃 엔진이 없으므로 가로 오버플로
+같은 CSS 문제는 여기서 잡히지 않는다 — 그건 실제 브라우저로 확인해야 한다.
+상태·피드백·렌더링 회귀를 고정하는 용도다. 실제로 겪은 버그들을 그대로 옮겼다:
+새 URL 을 해석했을 때 이전 게시글의 선택이 남는 문제, 완료 시 무엇을 저장하는지
+(zip 하나 vs 낱개 전부), 과거 작업이 새로고침마다 다시 저장되지 않는지,
+한 항목을 받는 동안 다른 버튼이 잠기지 않는지.
 
 ## 상태
 

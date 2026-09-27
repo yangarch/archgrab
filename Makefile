@@ -1,4 +1,4 @@
-.PHONY: help venv install install-hooks hashpw hashpw-docker dev dev-frontend test build-frontend up down logs update-engines clean
+.PHONY: help venv install install-hooks hashpw hashpw-docker test test-backend test-frontend dev dev-frontend test build-frontend up down logs update-engines clean
 
 BACKEND := backend
 VENV    := .venv
@@ -36,8 +36,13 @@ dev: ## 백엔드 개발 서버 (:8000)
 dev-frontend: ## 프론트 개발 서버 (:5173, /api → :8000 프록시)
 	cd frontend && npm run dev
 
-test: ## 단위 테스트 (네트워크 테스트 제외)
+test: test-backend test-frontend ## 전체 테스트
+
+test-backend: ## 백엔드 단위 테스트 (네트워크 테스트 제외)
 	cd $(BACKEND) && $(PY) -m pytest
+
+test-frontend: ## 프론트엔드 테스트 (jsdom — 레이아웃은 검증하지 못한다)
+	cd frontend && npm test
 
 build-frontend: ## 프론트 빌드 → backend/static
 	cd frontend && npm run build
