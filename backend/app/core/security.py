@@ -21,7 +21,14 @@ _MAXMEM = 96 * 1024 * 1024
 
 
 def hash_password(password: str) -> str:
-    """scrypt$n$r$p$salt$hash — stdlib 만으로 충분하고 네이티브 의존성이 없다."""
+    """scrypt:n:r:p:salt:hash — stdlib 만으로 충분하고 네이티브 의존성이 없다.
+
+    구분자가 `:` 인 이유: 예전엔 PHC 관례대로 `$` 를 썼는데, docker compose 의
+    `env_file` 은 값 안의 `$이름` 을 셸 변수로 해석해 빈 문자열로 바꿔버린다.
+    그래서 해시가 6필드에서 4필드로 잘린 채 컨테이너에 도착하고, 올바른
+    비밀번호도 항상 거부됐다(compose 경고: 'The "..." variable is not set').
+    base64 에는 `:` 가 나오지 않으므로 안전한 구분자다.
+    """
     salt = os.urandom(16)
     digest = hashlib.scrypt(
         password.encode(),
@@ -33,12 +40,14 @@ def hash_password(password: str) -> str:
         maxmem=_MAXMEM,
     )
     b64 = lambda raw: base64.b64encode(raw).decode()  # noqa: E731
-    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${b64(salt)}${b64(digest)}"
+    return f"scrypt:{_SCRYPT_N}:{_SCRYPT_R}:{_SCRYPT_P}:{b64(salt)}:{b64(digest)}"
 
 
 def verify_password(password: str, stored: str) -> bool:
+    # `:` 가 현재 형식, `$` 는 예전 형식 — 이미 발급된 해시가 계속 동작해야 한다.
+    separator = ":" if ":" in stored else "$"
     try:
-        scheme, n, r, p, salt_b64, hash_b64 = stored.split("$")
+        scheme, n, r, p, salt_b64, hash_b64 = stored.split(separator)
         if scheme != "scrypt":
             return False
         expected = base64.b64decode(hash_b64)
