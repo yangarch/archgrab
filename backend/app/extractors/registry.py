@@ -11,9 +11,10 @@ _EXTRACTORS: dict[Platform, Extractor] = {
     Platform.INSTAGRAM: instagram.extractor,
 }
 
+# 사용자에게 보이는 문구다 — 내부 마일스톤 번호는 쓰지 않는다.
 _PENDING = {
-    Platform.X: "X 는 M2 에서 지원합니다.",
-    Platform.YOUTUBE: "유튜브는 M3 에서 지원합니다.",
+    Platform.X: "X 는 아직 지원하지 않습니다. 지금은 인스타그램만 받을 수 있습니다.",
+    Platform.YOUTUBE: "유튜브는 아직 지원하지 않습니다. 지금은 인스타그램만 받을 수 있습니다.",
 }
 
 

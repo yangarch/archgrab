@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.auth import AuthRequired
 from app.core.errors import ErrorCode, ArchGrabError
+from app.core.link import follow
 from app.core.models import Job, JobCreate, JobStatus
 from app.core.url import parse_url
 from app.extractors.base import Selection
@@ -31,6 +32,8 @@ class JobCreated(BaseModel):
 @router.post("", response_model=JobCreated)
 async def create_job(payload: JobCreate) -> JobCreated:
     parsed = parse_url(payload.url)
+    if parsed.needs_redirect:
+        parsed = await asyncio.to_thread(follow, parsed)
     selection = Selection(
         item_ids=frozenset(payload.item_ids) if payload.item_ids else None,
         format_ids=payload.format_ids or {},

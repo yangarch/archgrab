@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.auth import AuthRequired
 from app.config import get_settings
 from app.core.cache import media_cache
+from app.core.link import follow
 from app.core.models import MediaInfo
 from app.core.url import parse_url
 from app.extractors import registry
@@ -39,6 +40,9 @@ def _proxy_thumbnails(info: MediaInfo) -> MediaInfo:
 @router.post("/resolve", response_model=ResolveResponse)
 async def resolve(payload: ResolveRequest) -> ResolveResponse:
     parsed = parse_url(payload.url)
+    # 공유 링크(/share/, t.co)는 실제 주소를 따라가야 한다. 블로킹이라 스레드로.
+    if parsed.needs_redirect:
+        parsed = await asyncio.to_thread(follow, parsed)
 
     cached = media_cache.get(parsed.cache_key, get_settings().resolve_cache_seconds)
     if cached is not None:
