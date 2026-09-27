@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+from app.config import get_settings
 from app.core import secrets_store
 from app.core.errors import ArchGrabError, ErrorCode
 from app.core.models import FormatOption, MediaInfo
@@ -29,6 +31,22 @@ NAME = "youtube"
 PREFIX = "youtube"
 
 AUDIO_NOTE = "오디오만"
+
+# 유튜브가 데이터센터 IP 를 막을 때 내는 문구. 집에서는 되는데 서버에서만
+# 실패하는 증상이 이것이다. 쿠키로도 풀리지만 원인은 로그인이 아니라 IP 라서,
+# 그냥 "쿠키를 등록하세요" 라고만 하면 오해를 부른다.
+_BOT_CHECK = re.compile(r"sign in to confirm|not a bot|confirm you'?re not", re.I)
+
+BOT_CHECK_MESSAGE = (
+    "유튜브가 이 서버의 IP 를 봇으로 보고 차단했습니다. 데이터센터 IP 에서 자주 생깁니다. "
+    "설정에서 유튜브 쿠키를 등록하거나, ARCHGRAB_PROXY 로 다른 IP 를 경유하세요."
+)
+
+DEGRADED_NOTICE = (
+    "유튜브 봇 감지를 피하려고 대체 클라이언트({client})로 받았습니다. "
+    "이 경로는 화질이 크게 제한됩니다(대개 360p). 원래 화질로 받으려면 "
+    "유튜브 쿠키를 등록하거나 프록시를 설정하세요."
+)
 
 
 def _is_audio_only(fmt: FormatOption) -> bool:
@@ -111,13 +129,51 @@ def to_media_info(parsed: ParsedUrl, raw: dict, *, used_cookies: bool) -> MediaI
     return info
 
 
+def _client_sets() -> tuple[list[str] | None, list[list[str]]]:
+    """(먼저 쓸 클라이언트, 실패 시 순서대로 시도할 후보들)."""
+    settings = get_settings()
+    primary = settings.client_list(settings.youtube_player_clients) or None
+    fallbacks = [[c] for c in settings.client_list(settings.youtube_fallback_clients)]
+    if primary:
+        fallbacks = [f for f in fallbacks if f[0] not in primary]
+    return primary, fallbacks
+
+
+def _extract(parsed: ParsedUrl, cookies: Path | None) -> tuple[dict, str | None]:
+    """(추출 결과, 폴백에 쓴 클라이언트).
+
+    봇 감지에 걸리면 다른 player_client 로 바꿔 다시 시도한다. 다만 실측상
+    동작하는 대체 클라이언트는 android 계열뿐이고 360p 로 제한된다 — 구제는
+    되지만 화질을 깎으므로, 쓰였다는 사실을 호출한 쪽에 돌려준다.
+    """
+    primary, fallbacks = _client_sets()
+    try:
+        return ytdlp_engine.extract(parsed.url, cookies, player_clients=primary), None
+    except ArchGrabError as exc:
+        if not _BOT_CHECK.search(exc.detail or ""):
+            raise
+        for clients in fallbacks:
+            try:
+                raw = ytdlp_engine.extract(parsed.url, cookies, player_clients=clients)
+            except ArchGrabError:
+                continue
+            return raw, clients[0]
+        raise ArchGrabError(
+            ErrorCode.LOGIN_REQUIRED, BOT_CHECK_MESSAGE, detail=exc.detail
+        ) from exc
+
+
 class YouTubeExtractor:
     name = NAME
 
     def probe(self, parsed: ParsedUrl) -> MediaInfo:
         with secrets_store.cookie_file(NAME) as cookies:
-            raw = ytdlp_engine.extract(parsed.url, cookies)
-            return to_media_info(parsed, raw, used_cookies=cookies is not None)
+            raw, degraded = _extract(parsed, cookies)
+            info = to_media_info(parsed, raw, used_cookies=cookies is not None)
+            if degraded:
+                # 조용히 360p 를 주지 않는다 — 화면에 이유를 띄운다
+                info.notice = DEGRADED_NOTICE.format(client=degraded)
+            return info
 
     def download(
         self,
@@ -139,6 +195,7 @@ class YouTubeExtractor:
             else:
                 spec = "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b"
 
+            primary, _ = _client_sets()
             paths = ytdlp_engine.download(
                 parsed.url,
                 dest,
@@ -147,6 +204,7 @@ class YouTubeExtractor:
                 progress=progress,
                 format_spec=spec,
                 outtmpl=_outtmpl(parsed),
+                player_clients=primary,
             )
             if not paths:
                 raise ArchGrabError(ErrorCode.ENGINE_FAILED, "내려받은 파일이 없습니다.")

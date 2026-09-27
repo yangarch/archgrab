@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from fastapi import APIRouter
 
+from app.config import get_settings
 from app.extractors import gallerydl_engine
 
 router = APIRouter(tags=["health"])
@@ -38,6 +39,10 @@ def _engine_versions() -> dict[str, object]:
         # 쿠키 없이 공개 인스타 콘텐츠를 받을 수 있는 상태인가
         "anonymous_instagram": targets > 0,
     }
+    settings = get_settings()
+    versions["youtube_player_clients"] = (
+        settings.youtube_player_clients or "(yt-dlp 기본값)"
+    )
     versions["ffmpeg"] = _probe(["ffmpeg", "-version"])
     versions["gallery_dl"] = gallerydl_engine.version()
     return versions

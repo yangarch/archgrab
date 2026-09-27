@@ -71,7 +71,7 @@ gallery-dl 주력 + yt-dlp 동영상 폴백으로 끝난다. yt-dlp 는 X 에서
 |---|---|---|---|
 | 인스타그램 | `instagram-web` | gallery-dl(쿠키 시) → yt-dlp | 스토리·비공개만 |
 | X | `gallery-dl` | yt-dlp | 비공개·민감 콘텐츠만 |
-| 유튜브 | `yt-dlp` | — | 불필요 |
+| 유튜브 | `yt-dlp` | android 계열(360p, 최후수단) | 데이터센터 IP 라면 필요할 수 있음 |
 
 유튜브는 성격이 또 다르다. 한 영상에 포맷이 **44개**씩 오고 **완결(영상+음성)
 포맷이 0개**다 — 전부 영상전용·음성전용이라 mux 가 선택이 아니라 필수다. 같은
@@ -82,6 +82,28 @@ gallery-dl 주력 + yt-dlp 동영상 폴백으로 끝난다. yt-dlp 는 X 에서
 합칠 음성도 컨테이너에 맞춘다. yt-dlp 의 `bestaudio` 는 품질만 보고 opus 를
 고르는데 **opus-in-mp4 는 QuickTime·iOS 기본 재생기가 열지 못하는 경우가 많다.**
 mp4 에는 m4a(AAC)를 붙인다.
+
+#### 유튜브 봇 감지 — 집에서는 되는데 서버에서 안 될 때
+
+유튜브는 데이터센터 IP 를 봇으로 본다. 같은 링크가 집 PC 에서는 되고 VPS 에서만
+"Sign in to confirm you're not a bot" 으로 막히는 게 전형적인 증상이다.
+
+player_client 를 바꿔 피하는 방법이 알려져 있지만, **실측해보면 거의 통하지
+않는다**(2026-09, yt-dlp 2026.08):
+
+| 클라이언트 | 결과 |
+|---|---|
+| `visionos` (기본값) | 42 포맷, 1080p |
+| `android` / `android_vr` | 5 포맷, **360p 만** |
+| `web` `tv` `tv_simply` `ios` `mweb` `web_safari` `web_music` | 전부 실패 |
+
+즉 클라이언트 교체로는 화질을 지킬 수 없다. 실질적인 해결책은 둘이다:
+
+1. **유튜브 쿠키 등록** (설정 화면) — 가장 확실하다
+2. **`ARCHGRAB_PROXY`** 로 다른 IP 경유
+
+봇 감지에 걸리면 마지막 수단으로 android 계열을 시도하되, 화질이 제한된다는
+사실을 화면에 띄운다. 조용히 360p 를 주지 않는다.
 
 그래서 `app/extractors/instagram_web.py` 를 두고 주력으로 쓴다. yt-dlp 는
 동영상 폴백, gallery-dl 은 쿠키가 있을 때의 폴백이다.

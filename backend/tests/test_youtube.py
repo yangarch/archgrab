@@ -94,3 +94,71 @@ class TestAudioChoice:
 
     def test_none_when_no_audio(self) -> None:
         assert pick_audio([video("134", 360, "mp4", 1)]) is None
+
+
+class TestBotCheckFallback:
+    """유튜브는 데이터센터 IP 를 봇으로 본다. 집에서는 되는데 서버에서만 실패한다.
+
+    실측(2026-09): 동작하는 대체 클라이언트는 android 계열뿐이고 360p 로 제한된다.
+    구제는 되지만 화질을 깎으므로 조용히 넘어가면 안 된다.
+    """
+
+    def _boom(self, message: str):  # noqa: ANN202
+        from app.core.errors import ArchGrabError, ErrorCode
+
+        def raiser(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            raise ArchGrabError(ErrorCode.ENGINE_FAILED, detail=message)
+
+        return raiser
+
+    def test_non_bot_errors_are_not_retried(self, monkeypatch) -> None:  # noqa: ANN001
+        """봇 감지가 아닌 실패까지 여러 클라이언트로 재시도하면 시간만 버린다."""
+        import pytest
+
+        from app.core.errors import ArchGrabError
+        from app.extractors import youtube, ytdlp_engine
+
+        calls = []
+
+        def raiser(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            calls.append(kwargs.get("player_clients"))
+            self._boom("Video unavailable")()
+
+        monkeypatch.setattr(ytdlp_engine, "extract", raiser)
+        from app.core.url import Kind, ParsedUrl, Platform
+
+        parsed = ParsedUrl(Platform.YOUTUBE, Kind.VIDEO, "x", "https://youtu.be/x")
+        with pytest.raises(ArchGrabError):
+            youtube._extract(parsed, None)
+        assert len(calls) == 1, calls
+
+    def test_bot_check_falls_back_and_reports_which_client(self, monkeypatch) -> None:  # noqa: ANN001
+        from app.core.url import Kind, ParsedUrl, Platform
+        from app.extractors import youtube, ytdlp_engine
+
+        attempts = []
+
+        def maybe(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            clients = kwargs.get("player_clients")
+            attempts.append(clients)
+            if clients is None:
+                self._boom("Sign in to confirm you're not a bot")()
+            return {"title": "t", "formats": []}
+
+        monkeypatch.setattr(ytdlp_engine, "extract", maybe)
+        parsed = ParsedUrl(Platform.YOUTUBE, Kind.VIDEO, "x", "https://youtu.be/x")
+        raw, degraded = youtube._extract(parsed, None)
+        assert raw["title"] == "t"
+        assert degraded == "android_vr"
+        assert len(attempts) == 2
+
+    def test_degraded_fallback_is_announced(self) -> None:
+        """360p 로 떨어졌으면 화면에 이유가 떠야 한다."""
+        assert "360p" in youtube_degraded_notice()
+        assert "쿠키" in youtube_degraded_notice()
+
+
+def youtube_degraded_notice() -> str:
+    from app.extractors.youtube import DEGRADED_NOTICE
+
+    return DEGRADED_NOTICE.format(client="android_vr")

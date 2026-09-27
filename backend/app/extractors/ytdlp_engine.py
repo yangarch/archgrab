@@ -25,7 +25,7 @@ def version() -> str:
     return yt_dlp.version.__version__
 
 
-def _base_opts(cookies: Path | None) -> dict[str, Any]:
+def _base_opts(cookies: Path | None, *, player_clients: list[str] | None = None) -> dict[str, Any]:
     settings = get_settings()
     opts: dict[str, Any] = {
         "quiet": True,
@@ -41,6 +41,8 @@ def _base_opts(cookies: Path | None) -> dict[str, Any]:
         opts["cookiefile"] = str(cookies)
     if settings.proxy:
         opts["proxy"] = settings.proxy
+    if player_clients:
+        opts["extractor_args"] = {"youtube": {"player_client": player_clients}}
     return opts
 
 
@@ -48,10 +50,12 @@ def _wrap_error(exc: Exception) -> ArchGrabError:
     return from_engine_error(mask_secrets(str(exc)))
 
 
-def extract(url: str, cookies: Path | None = None) -> dict[str, Any]:
+def extract(
+    url: str, cookies: Path | None = None, *, player_clients: list[str] | None = None
+) -> dict[str, Any]:
     """메타데이터만 — download=False."""
     try:
-        with yt_dlp.YoutubeDL(_base_opts(cookies)) as ydl:
+        with yt_dlp.YoutubeDL(_base_opts(cookies, player_clients=player_clients)) as ydl:
             info = ydl.extract_info(url, download=False)
     except (DownloadError, ExtractorError) as exc:
         raise _wrap_error(exc) from exc
@@ -250,6 +254,7 @@ def download(
     progress: ProgressCallback | None = None,
     outtmpl: str = "%(title).80B [%(id)s].%(ext)s",
     format_spec: str | None = None,
+    player_clients: list[str] | None = None,
 ) -> list[Path]:
     """dest 에 받은 파일 경로 목록. 코덱 변환은 하지 않는다 (mux 만)."""
     produced: list[Path] = []
@@ -268,7 +273,7 @@ def download(
             if name:
                 produced.append(Path(name))
 
-    opts = _base_opts(cookies)
+    opts = _base_opts(cookies, player_clients=player_clients)
     opts.update(
         {
             "paths": {"home": str(dest)},
