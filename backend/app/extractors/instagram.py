@@ -29,9 +29,9 @@ from app.core.errors import ArchGrabError, ErrorCode
 from app.core.models import FormatOption, MediaInfo, MediaItem
 from app.core.url import Kind, ParsedUrl
 from app.extractors import gallerydl_engine, instagram_web, ytdlp_engine
-from app.extractors.base import ProgressCallback, ProgressEvent, Selection, noop_progress
+from app.extractors.base import ProgressCallback, Selection, noop_progress
+from app.extractors.common import fetch_pairs, first_text, media_filename, parse_timestamp
 from app.extractors.gallerydl_engine import GalleryEntry
-from app.media import fetcher
 from app.media.storage import safe_name
 
 NAME = "instagram"
@@ -184,7 +184,7 @@ class InstagramExtractor:
                 raise ArchGrabError(ErrorCode.ENGINE_FAILED, "내려받을 포맷을 찾지 못했습니다.")
 
             try:
-                return _fetch_pairs(pairs, dest, cookies, progress)
+                return fetch_pairs(pairs, dest, cookies, progress, referer=REFERER)
             except ArchGrabError:
                 if attempt:
                     raise
@@ -221,7 +221,7 @@ class InstagramExtractor:
             if chosen is None or not chosen.url:
                 continue
             pairs.append((
-                _item_filename(parsed, media, item, chosen, numbered=multiple),
+                media_filename("instagram", parsed, media, item, chosen, numbered=multiple),
                 chosen.url,
             ))
         return pairs
@@ -245,7 +245,7 @@ class InstagramExtractor:
             (_gallery_filename(parsed, entry, post, index=index, numbered=multiple), entry.url)
             for index, entry in chosen
         ]
-        return _fetch_pairs(pairs, dest, cookies, progress)
+        return fetch_pairs(pairs, dest, cookies, progress, referer=REFERER)
 
     def _via_ytdlp(
         self,
@@ -289,12 +289,12 @@ class InstagramExtractor:
         multiple = len(targets) > 1
         pairs = [
             (
-                _item_filename(parsed, media, item, fmt, numbered=multiple),
+                media_filename("instagram", parsed, media, item, fmt, numbered=multiple),
                 str(fmt.url),
             )
             for item, fmt in targets
         ]
-        return _fetch_pairs(pairs, dest, cookies, progress)
+        return fetch_pairs(pairs, dest, cookies, progress, referer=REFERER)
 
     @staticmethod
     def _require_cookies(parsed: ParsedUrl, cookies: Path | None) -> None:
@@ -305,42 +305,14 @@ class InstagramExtractor:
             )
 
 
-# ---- 공통 내려받기 --------------------------------------------------------
-
-def _fetch_pairs(
-    pairs: list[tuple[str, str]],
-    dest: Path,
-    cookies: Path | None,
-    progress: ProgressCallback,
-) -> list[Path]:
-    """(파일명, 주소) 목록을 순서대로 받는다. 두 엔진이 이 경로를 공유한다."""
-    event = ProgressEvent(count=len(pairs))
-    paths: list[Path] = []
-
-    for position, (name, url) in enumerate(pairs, start=1):
-        target = dest / name
-        event.index = position
-        event.current = name
-
-        def on_bytes(done: int, total: int | None, _event: ProgressEvent = event) -> None:
-            _event.done_bytes = done
-            _event.total_bytes = total
-            progress(_event)
-
-        fetcher.fetch_to_file(url, target, referer=REFERER, cookies=cookies, progress=on_bytes)
-        paths.append(target)
-
-    return paths
-
-
 # ---- 파일명 --------------------------------------------------------------
 
 def _gallery_filename(
     parsed: ParsedUrl, entry: GalleryEntry, post: dict, *, index: int, numbered: bool
 ) -> str:
     meta = post or entry.meta
-    username = _first(meta, "username", "owner_username") or parsed.username or "unknown"
-    key = parsed.key or _first(entry.meta, "post_shortcode", "shortcode") or "item"
+    username = first_text(meta, "username", "owner_username") or parsed.username or "unknown"
+    key = parsed.key or first_text(entry.meta, "post_shortcode", "shortcode") or "item"
     suffix = f"_{index + 1}" if numbered else ""
     return safe_name(f"instagram_{username}_{key}{suffix}.{entry.extension}")
 
@@ -351,45 +323,6 @@ def _outtmpl(parsed: ParsedUrl, media: MediaInfo) -> str:
     key = (parsed.key or media.key or "item").replace("%", "%%")
     stem = safe_name(f"instagram_{username}_{key}", fallback="instagram")
     return f"{stem}.%(ext)s"
-
-
-def _item_filename(
-    parsed: ParsedUrl,
-    media: MediaInfo,
-    item: MediaItem,
-    fmt: FormatOption,
-    *,
-    numbered: bool,
-) -> str:
-    username = media.uploader or parsed.username or "unknown"
-    key = parsed.key or media.key or "item"
-    suffix = f"_{item.index + 1}" if numbered else ""
-    return safe_name(f"instagram_{username}_{key}{suffix}.{fmt.ext}")
-
-
-# ---- gallery-dl 결과 정규화 ------------------------------------------------
-
-def _first(meta: dict, *keys: str) -> str | None:
-    for key in keys:
-        value = meta.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def _taken_at(meta: dict) -> datetime | None:
-    raw = meta.get("date")
-    if isinstance(raw, str):
-        try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    if isinstance(raw, int | float) and raw > 0:
-        try:
-            return datetime.fromtimestamp(raw)
-        except (OSError, OverflowError, ValueError):
-            return None
-    return None
 
 
 def _to_media_info(
@@ -409,9 +342,9 @@ def _to_media_info(
                 id=str(index),
                 index=index,
                 type=entry.media_type,  # type: ignore[arg-type]
-                title=_first(entry.meta, "description", "title"),
+                title=first_text(entry.meta, "description", "title"),
                 # 동영상은 포스터 이미지를, 이미지는 자기 자신을 썸네일로 쓴다
-                thumbnail=_first(entry.meta, "display_url", "thumbnail")
+                thumbnail=first_text(entry.meta, "display_url", "thumbnail")
                 or (entry.url if entry.media_type == "image" else None),
                 duration=entry.meta.get("duration"),
                 width=width,
@@ -431,18 +364,18 @@ def _to_media_info(
         )
 
     meta = post or (entries[0].meta if entries else {})
-    username = _first(meta, "username", "owner_username", "user") or parsed.username
+    username = first_text(meta, "username", "owner_username", "user") or parsed.username
 
     return MediaInfo(
         platform=parsed.platform,
         kind=parsed.kind,
         source_url=parsed.url,
         key=parsed.key,
-        title=_first(meta, "description", "title"),
+        title=first_text(meta, "description", "title"),
         uploader=username,
         uploader_url=f"https://www.instagram.com/{username}/" if username else None,
-        description=_first(meta, "description"),
-        taken_at=_taken_at(meta),
+        description=first_text(meta, "description"),
+        taken_at=parse_timestamp(meta.get("date")),
         items=items,
         engine=GALLERY_DL,
         used_cookies=used_cookies,

@@ -332,7 +332,7 @@ def test_carousel_items_are_numbered_even_when_downloaded_one_at_a_time() -> Non
     """15장 중 한 장씩 따로 받아도 파일명이 겹치면 안 된다."""
     from app.core.models import FormatOption, MediaInfo, MediaItem
     from app.core.url import Kind, ParsedUrl, Platform
-    from app.extractors.instagram import _item_filename
+    from app.extractors.common import media_filename
 
     parsed = ParsedUrl(Platform.INSTAGRAM, Kind.POST, "ABC",
                        "https://www.instagram.com/p/ABC/")
@@ -343,8 +343,8 @@ def test_carousel_items_are_numbered_even_when_downloaded_one_at_a_time() -> Non
     third = MediaItem(id="2", index=2, type="image", formats=[fmt])
 
     names = {
-        _item_filename(parsed, media, first, fmt, numbered=True),
-        _item_filename(parsed, media, third, fmt, numbered=True),
+        media_filename("instagram", parsed, media, first, fmt, numbered=True),
+        media_filename("instagram", parsed, media, third, fmt, numbered=True),
     }
     assert names == {"instagram_someone_ABC_1.jpg", "instagram_someone_ABC_3.jpg"}
 

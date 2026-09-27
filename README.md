@@ -15,7 +15,7 @@ FastAPI 하나가 API와 React SPA를 함께 서빙한다. 컨테이너 1개, Re
 
 | 계층 | 내용 |
 |---|---|
-| 추출 | `instagram-web`(비로그인 GraphQL 직접 호출) 주력 + `gallery-dl`·`yt-dlp` 폴백 |
+| 추출 | 플랫폼마다 다르다 — 인스타는 `instagram-web`, X 는 `gallery-dl` 이 주력. 어댑터로 감쌈 |
 | 작업 | 인프로세스 asyncio 큐 + SQLite. 진행률은 SSE |
 | 저장 | `data/{job_id}/`, TTL 경과 후 자동 삭제 |
 | 인증 | 단일 비밀번호(scrypt) → 서명 세션 쿠키 |
@@ -61,6 +61,16 @@ make logs
 | `yt-dlp` | ✅ | ❌ | 이미지 항목을 버린다 — 15장 캐러셀에서 동영상 3개만 남고 12개가 사라짐 (`No video formats found!`) |
 | `gallery-dl` | ❌ | ✅ | 익명 접근 자체가 안 됨 — `browser=firefox`·`chrome`·`api=graphql` 모두 로그인 리다이렉트 |
 | `instagram-web` | ✅ | ✅ | 같은 응답을 직접 읽는다. 이미지·동영상을 전부 열거 |
+
+**X 는 사정이 다르다.** 같은 조사를 X 에 해보니 gallery-dl 이 익명으로 사진·동영상을
+모두 처리했다(`type=photo` 로 종류까지 직접 준다). 그래서 X 는 커스텀 엔진 없이
+gallery-dl 주력 + yt-dlp 동영상 폴백으로 끝난다. yt-dlp 는 X 에서도 사진 트윗에
+"No video could be found" 로 실패하는 건 같다.
+
+| 플랫폼 | 주력 | 폴백 | 쿠키 |
+|---|---|---|---|
+| 인스타그램 | `instagram-web` | gallery-dl(쿠키 시) → yt-dlp | 스토리·비공개만 |
+| X | `gallery-dl` | yt-dlp | 비공개·민감 콘텐츠만 |
 
 그래서 `app/extractors/instagram_web.py` 를 두고 주력으로 쓴다. yt-dlp 는
 동영상 폴백, gallery-dl 은 쿠키가 있을 때의 폴백이다.
@@ -255,6 +265,7 @@ cd backend && ../.venv/bin/python -m pytest -m network   # 실제 추출까지 (
 - [x] **M1** 인스타그램 — 쿠키 없이 종단 검증 완료. 15장 캐러셀(이미지 12 + 동영상 3)을
       전부 열거하고, 항목별로 골라 받고, 이미지가 원본 3072×4096 으로 내려오는 것까지
       `ffprobe` 실측. 항목마다 타입이 보이는 개별 다운로드 버튼 제공.
-- [ ] **M2** X
+- [x] **M2** X — 사진·동영상 모두 쿠키 없이 동작. 실물 트윗으로 종단 검증
+      (사진 1477×1108, 동영상 1080×1080 h264+aac). `?s=` 추적 파라미터 제거 확인.
 - [ ] **M3** 유튜브
 - [ ] **M4** 외부 노출 · 히스토리
