@@ -56,7 +56,12 @@ export default function App() {
     })
   }, [])
 
-  async function startDownload(itemIds: string[], key: string, mode: SaveMode = 'zip') {
+  async function startDownload(
+    itemIds: string[],
+    key: string,
+    mode: SaveMode = 'zip',
+    formatIds: Record<string, string> = {},
+  ) {
     if (!resolved) return
     setJobError(null)
     mark(key, { status: 'starting', percent: 0 })
@@ -66,6 +71,8 @@ export default function App() {
         item_ids: itemIds.length === resolved.info.items.length ? null : itemIds,
         // 낱개로 저장할 거면 zip 을 만들 필요가 없다
         bundle: mode === 'zip',
+        // 유튜브처럼 화질이 여럿인 경우 고른 것을 그대로 넘긴다
+        format_ids: Object.keys(formatIds).length > 0 ? formatIds : null,
       })
       const job = await api.getJob(job_id)
       setActiveJob((current) => ({ ...current, [key]: job_id }))

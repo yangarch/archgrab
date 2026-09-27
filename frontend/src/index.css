@@ -271,3 +271,17 @@ button.primary.is-error { color: var(--danger); background: color-mix(in srgb, v
   .tile-foot { flex-direction: column; align-items: stretch; gap: 4px; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(min(110px, 100%), 1fr)); }
 }
+
+/* 화질 선택기 — 선택지가 여럿인 항목(유튜브)에만 뜬다 */
+select.quality {
+  font: inherit;
+  font-size: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+select.quality:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

@@ -10,7 +10,12 @@ interface Props {
   info: MediaInfo
   /** 요청키 → 진행 상태 */
   downloads: Record<string, DownloadState>
-  onDownload: (itemIds: string[], key: string, mode: SaveMode) => void
+  onDownload: (
+    itemIds: string[],
+    key: string,
+    mode: SaveMode,
+    formatIds: Record<string, string>,
+  ) => void
 }
 
 function duration(seconds?: number | null) {
@@ -51,6 +56,14 @@ function buttonView(state: DownloadState | undefined, idle: string) {
 export default function MediaPreview({ info, downloads, onDownload }: Props) {
   const allIds = useMemo(() => info.items.map((item) => item.id), [info])
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allIds))
+  /* 항목별로 고른 포맷. 유튜브는 한 영상에 화질이 9개까지 오므로 고를 수 있어야
+     한다. 인스타·X 는 대개 하나뿐이라 선택기가 뜨지 않는다. */
+  const [formatIds, setFormatIds] = useState<Record<string, string>>(() =>
+    Object.fromEntries(info.items.map((item) => [item.id, item.formats[0]?.id ?? ''])),
+  )
+
+  const formatOf = (item: MediaItem) =>
+    item.formats.find((f) => f.id === formatIds[item.id]) ?? item.formats[0]
 
   const toggle = (id: string) =>
     setSelected((current) => {
@@ -100,7 +113,7 @@ export default function MediaPreview({ info, downloads, onDownload }: Props) {
           className={`small${asEach.tone}`}
           disabled={anyBulkBusy || chosen.length === 0}
           aria-busy={asEach.busy}
-          onClick={() => onDownload(chosen, BULK_EACH_KEY, 'each')}
+          onClick={() => onDownload(chosen, BULK_EACH_KEY, 'each', formatIds)}
         >
           {asEach.busy && <span className="spinner" aria-hidden="true" />}
           {asEach.text}
@@ -111,7 +124,7 @@ export default function MediaPreview({ info, downloads, onDownload }: Props) {
             className={`primary${asZip.tone}`}
             disabled={anyBulkBusy}
             aria-busy={asZip.busy}
-            onClick={() => onDownload(chosen, BULK_ZIP_KEY, 'zip')}
+            onClick={() => onDownload(chosen, BULK_ZIP_KEY, 'zip', formatIds)}
           >
             {asZip.busy && <span className="spinner" aria-hidden="true" />}
             {asZip.text}
@@ -127,8 +140,9 @@ export default function MediaPreview({ info, downloads, onDownload }: Props) {
       <div className="grid">
         {info.items.map((item) => {
           const active = selected.has(item.id)
-          const { ext, label } = itemKind(item)
-          const format = item.formats[0]
+          const { label } = itemKind(item)
+          const format = formatOf(item)
+          const ext = format?.ext ?? (item.type === 'video' ? 'mp4' : 'jpg')
           const view = buttonView(downloads[item.id], `${ext} 내려받기`)
           return (
             <div key={item.id} className={`tile${active ? ' tile-on' : ''}`}>
@@ -158,15 +172,32 @@ export default function MediaPreview({ info, downloads, onDownload }: Props) {
               </button>
 
               <div className="tile-foot">
-                <div className="small muted clamp" title={format?.label}>
-                  {format?.label ?? '원본'}
-                </div>
+                {item.formats.length > 1 ? (
+                  <select
+                    className="small quality"
+                    aria-label={`${item.index + 1}번 항목 화질`}
+                    value={format?.id ?? ''}
+                    onChange={(event) =>
+                      setFormatIds((current) => ({ ...current, [item.id]: event.target.value }))
+                    }
+                  >
+                    {item.formats.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="small muted clamp" title={format?.label}>
+                    {format?.label ?? '원본'}
+                  </div>
+                )}
                 {/* 항목마다 타입이 보이는 개별 다운로드 버튼 */}
                 <button
                   className={`small dl${view.tone}`}
                   disabled={view.busy}
                   aria-busy={view.busy}
-                  onClick={() => onDownload([item.id], item.id, 'each')}
+                  onClick={() => onDownload([item.id], item.id, 'each', formatIds)}
                 >
                   {view.busy && <span className="spinner" aria-hidden="true" />}
                   {view.text}

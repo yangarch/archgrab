@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import MediaPreview, { BULK_EACH_KEY, BULK_ZIP_KEY } from '../MediaPreview'
-import { makeInfo, makeItem } from '../../test/factories'
+import { makeInfo, makeItem, makeMultiFormatItem } from '../../test/factories'
 
 const three = [makeItem('0'), makeItem('1', 'video'), makeItem('2')]
 
@@ -100,5 +100,44 @@ describe('누락 안내', () => {
     })
     render(<MediaPreview info={info} downloads={{}} onDownload={vi.fn()} />)
     expect(screen.getByText(/12개 항목을 가져오지 못했습니다/)).toBeInTheDocument()
+  })
+})
+
+describe('화질 선택 (유튜브처럼 포맷이 여럿인 경우)', () => {
+  it('포맷이 하나뿐이면 선택기 대신 라벨만 보인다', () => {
+    setup([makeItem('0')])
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    expect(screen.getByTitle('1080×1350 · jpg · 원본')).toBeInTheDocument()
+  })
+
+  it('포맷이 여러 개면 선택기가 뜨고 기본은 첫 번째다', () => {
+    setup([makeMultiFormatItem()])
+    const picker = screen.getByRole('combobox', { name: /1번 항목 화질/ })
+    expect(picker).toHaveValue('401')
+    expect(screen.getAllByRole('option')).toHaveLength(4)
+  })
+
+  it('고른 화질에 따라 버튼의 확장자가 바뀐다', async () => {
+    const { user } = setup([makeMultiFormatItem()])
+    expect(screen.getByRole('button', { name: 'mp4 내려받기' })).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: /화질/ }), '140')
+    expect(screen.getByRole('button', { name: 'm4a 내려받기' })).toBeInTheDocument()
+  })
+
+  it('고른 화질이 다운로드 요청에 실린다', async () => {
+    const { onDownload, user } = setup([makeMultiFormatItem()])
+    await user.selectOptions(screen.getByRole('combobox', { name: /화질/ }), '134')
+    await user.click(screen.getByRole('button', { name: 'mp4 내려받기' }))
+
+    expect(onDownload).toHaveBeenCalledWith(['0'], '0', 'each', { '0': '134' })
+  })
+
+  it('일괄 받기에도 고른 화질이 실린다', async () => {
+    const { onDownload, user } = setup([makeMultiFormatItem('0'), makeItem('1')])
+    await user.selectOptions(screen.getByRole('combobox', { name: /1번 항목 화질/ }), '137')
+    await user.click(screen.getByRole('button', { name: /낱개로 2개/ }))
+
+    expect(onDownload.mock.calls[0][3]).toEqual({ '0': '137', '1': 'original' })
   })
 })
