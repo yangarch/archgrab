@@ -155,7 +155,22 @@ uid 10001 로 내려간다(`docker/entrypoint.sh`). 리눅스에서 호스트 �
 다른 uid 소유라 작업이 "권한 없음" 으로 실패하는 걸 막는다. 서버 프로세스 자체는
 비root 다.
 
-### 4. 외부 노출: Cloudflare Tunnel
+### 4-A. 외부 노출: 이미 nginx 가 있다면
+
+앱은 루프백에만 묶여 있으니 nginx 가 앞에 서면 된다.
+`docker/nginx.conf.example` 을 복사해 도메인과 인증서 경로만 바꾼다.
+
+```bash
+sudo cp docker/nginx.conf.example /etc/nginx/sites-available/archgrab
+sudo ln -s /etc/nginx/sites-available/archgrab /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+이 앱에서 놓치기 쉬운 세 가지가 그 파일에 주석으로 적혀 있다:
+**버퍼링 끄기**(진행률 SSE·큰 파일), **X-Forwarded-For**(로그인 레이트리밋이
+이 헤더로 IP 를 본다), 그리고 **HTTPS 와 `COOKIE_SECURE=true` 는 한 쌍**이라는 점.
+
+### 4-B. 외부 노출: Cloudflare Tunnel
 
 포트를 직접 열지 않는다. 인바운드 개방이 필요 없고 TLS가 자동이며,
 Cloudflare Access로 비밀번호 앞에 2차 인증을 덧댈 수 있다.
