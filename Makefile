@@ -1,4 +1,4 @@
-.PHONY: help venv install install-hooks hashpw dev dev-frontend test build-frontend up down logs update-engines clean
+.PHONY: help venv install install-hooks hashpw hashpw-docker dev dev-frontend test build-frontend up down logs update-engines clean
 
 BACKEND := backend
 VENV    := .venv
@@ -26,6 +26,9 @@ scan: ## 스테이징된 내용을 수동으로 검사
 
 hashpw: ## SECRET_KEY 와 비밀번호 해시 생성 (.env 에 붙여넣기)
 	cd $(BACKEND) && $(PY) -m app.tools.hashpw
+
+hashpw-docker: ## 해시 생성 (Docker 만 있는 서버용 — venv 불필요)
+	docker compose run --rm --no-deps -it app python -m app.tools.hashpw
 
 dev: ## 백엔드 개발 서버 (:8000)
 	cd $(BACKEND) && $(CURDIR)/$(VENV)/bin/uvicorn app.main:app --reload --port 8000

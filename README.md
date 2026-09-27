@@ -110,11 +110,75 @@ make update-engines    # 가장 먼저 할 일
 `LOGIN_REQUIRED`(쿠키 필요·만료) · `PRIVATE` · `NOT_FOUND` · `RATE_LIMITED`(잠시 대기).
 차단이 심하면 `.env`에 `ARCHGRAB_PROXY`를 지정한다.
 
-## 외부에서 접속하기
+## 개인 서버에 배포하기
 
-포트를 직접 열지 말고 **Cloudflare Tunnel**을 권한다 — 인바운드 포트 개방이 필요 없고
-TLS가 자동이며, Cloudflare Access로 2차 인증을 덧댈 수 있다. HTTPS 뒤에 두면
-`.env`에 `ARCHGRAB_COOKIE_SECURE=true`를 넣는다. 자세한 설정은 M4에서 다룬다.
+`.env`, `data/`, `secrets/` 의 내용은 커밋되지 않으므로 **서버에서 새로 만든다.**
+
+```bash
+git clone https://github.com/yangarch/archgrab.git
+cd archgrab
+cp .env.example .env
+```
+
+### 1. 자격 증명 생성
+
+Python venv가 있으면 `make install && make hashpw`, **Docker만 있으면**:
+
+```bash
+docker compose build
+make hashpw-docker      # = docker compose run --rm --no-deps -it app python -m app.tools.hashpw
+```
+
+출력된 `ARCHGRAB_SECRET_KEY` 와 `ARCHGRAB_PASSWORD_HASH` 두 줄을 `.env` 에 넣는다.
+`SECRET_KEY` 는 세션 서명과 쿠키 암호화 키 유도를 겸하므로 **서버마다 새로 만든다.**
+(바꾸면 기존에 등록한 쿠키는 복호화 불가라 재등록해야 한다.)
+
+### 2. HTTPS 뒤에 둘 것이므로
+
+```bash
+# .env
+ARCHGRAB_COOKIE_SECURE=true
+```
+
+### 3. 기동
+
+```bash
+docker compose up -d
+docker compose logs -f app
+```
+
+`docker-compose.yml` 은 포트를 **루프백에만** 묶는다(`127.0.0.1:8000:8000`).
+인터넷에 직접 열지 않고 아래 터널을 통해 노출하는 것을 전제한 설정이다.
+
+컨테이너는 root 로 시작해 바인드 마운트된 `/data`·`/secrets` 의 소유권을 맞춘 뒤
+uid 10001 로 내려간다(`docker/entrypoint.sh`). 리눅스에서 호스트 디렉터리가
+다른 uid 소유라 작업이 "권한 없음" 으로 실패하는 걸 막는다. 서버 프로세스 자체는
+비root 다.
+
+### 4. 외부 노출: Cloudflare Tunnel
+
+포트를 직접 열지 않는다. 인바운드 개방이 필요 없고 TLS가 자동이며,
+Cloudflare Access로 비밀번호 앞에 2차 인증을 덧댈 수 있다.
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create archgrab
+cloudflared tunnel route dns archgrab archgrab.example.com
+cloudflared tunnel run --url http://127.0.0.1:8000 archgrab
+```
+
+대안: Tailscale(완전 사설망) / Caddy + 도메인 + Let's Encrypt.
+
+### 배포 후 확인
+
+```bash
+curl -fsS http://127.0.0.1:8000/api/health              # {"status":"ok"}
+curl -s  http://127.0.0.1:8000/api/engines              # anonymous_instagram 이 true 여야 한다
+docker exec archgrab sh -c 'grep ^Uid /proc/1/status'   # 10001 (root 가 아님)
+```
+
+`anonymous_instagram` 이 false 면 `curl_cffi` 가 빠진 것이고, 그 상태로는
+공개 게시글까지 "로그인 필요"로 실패한다.
 
 ## 개인정보·비밀값 유출 방어
 
