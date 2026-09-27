@@ -158,13 +158,30 @@ uid 10001 로 내려간다(`docker/entrypoint.sh`). 리눅스에서 호스트 �
 ### 4-A. 외부 노출: 이미 nginx 가 있다면
 
 앱은 루프백에만 묶여 있으니 nginx 가 앞에 서면 된다.
-`docker/nginx.conf.example` 을 복사해 도메인과 인증서 경로만 바꾼다.
+
+**인증서가 이미 있다면** `docker/nginx.conf.example` 을 복사해 도메인 2곳과
+인증서 경로 2곳을 바꾼다.
 
 ```bash
 sudo cp docker/nginx.conf.example /etc/nginx/sites-available/archgrab
+sudo sed -i 's/archgrab\.example\.com/내도메인/g' /etc/nginx/sites-available/archgrab
 sudo ln -s /etc/nginx/sites-available/archgrab /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+**인증서를 새로 받아야 한다면** HTTP 전용 설정으로 먼저 띄운다. 인증서가 없는
+상태로 SSL 블록을 올리면 `nginx -t` 부터 실패해서 certbot 을 돌릴 수 없다.
+
+```bash
+sudo cp docker/nginx-bootstrap.conf.example /etc/nginx/sites-available/archgrab
+sudo sed -i 's/archgrab\.example\.com/내도메인/g' /etc/nginx/sites-available/archgrab
+sudo ln -s /etc/nginx/sites-available/archgrab /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d 내도메인
+```
+
+이 동안에는 `.env` 의 `ARCHGRAB_COOKIE_SECURE` 를 **false** 로 두고, HTTPS 가
+붙은 뒤 true 로 되돌린 다음 `docker compose up -d` 로 재기동한다.
 
 이 앱에서 놓치기 쉬운 세 가지가 그 파일에 주석으로 적혀 있다:
 **버퍼링 끄기**(진행률 SSE·큰 파일), **X-Forwarded-For**(로그인 레이트리밋이

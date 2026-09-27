@@ -1,0 +1,43 @@
+# 1단계: HTTPS 인증서를 받기 전에 쓰는 임시 설정 (HTTP 전용)
+#
+# 왜 필요한가 — certbot 의 HTTP-01 인증은 nginx 가 80 포트에서 응답해야 하는데,
+# 인증서가 아직 없는 상태로 SSL 블록을 올리면 `nginx -t` 부터 실패한다.
+# 그래서 HTTP 로 먼저 띄우고, certbot 이 SSL 블록을 알아서 추가하게 한다.
+#
+#   sudo cp docker/nginx-bootstrap.conf.example /etc/nginx/sites-available/archgrab
+#   sudo ln -s /etc/nginx/sites-available/archgrab /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#   sudo certbot --nginx -d archgrab.example.com
+#
+# certbot 이 끝나면 이 파일에 SSL 블록이 추가된다. 그다음 nginx.conf.example 의
+# location 블록 내용(버퍼링·타임아웃·프록시 헤더)을 certbot 이 만든 443 블록에
+# 옮겨 붙이면 된다.
+#
+# ⚠ 인증서를 받기 전까지는 .env 에 ARCHGRAB_COOKIE_SECURE=false 로 두어야 한다.
+#    HTTP 로 접속하는데 true 면 세션 쿠키가 저장되지 않아 로그인이 무한 반복된다.
+#    HTTPS 로 바꾼 뒤 true 로 되돌리고 `docker compose up -d` 로 재기동한다.
+
+server {
+    listen 80;
+    server_name archgrab.example.com;          # ← 도메인으로 바꾸세요
+
+    client_max_body_size 2m;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_max_temp_file_size 0;
+
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+}
