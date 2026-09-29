@@ -285,3 +285,7 @@ select.quality {
   color: var(--text);
 }
 select.quality:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 파일 한 줄 = 다운로드 링크 + (지원 기기에서만) 갤러리 저장 */
+.file-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.file-row > .file { flex: 1; min-width: 0; }

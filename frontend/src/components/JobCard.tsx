@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useJobStream } from '../hooks/useJobStream'
-import type { Job, JobStatus, SaveMode } from '../api/types'
+import type { Job, JobFile, JobStatus, SaveMode } from '../api/types'
+import { isShareable, shareFile, type ShareOutcome } from '../lib/share'
 
 const STATUS_LABEL: Record<string, string> = {
   queued: '대기 중',
@@ -10,6 +11,14 @@ const STATUS_LABEL: Record<string, string> = {
   done: '완료',
   error: '실패',
   canceled: '취소',
+}
+
+/** 공유가 끝난 뒤 알려줄 말. 성공·취소는 굳이 말하지 않는다. */
+const SHARE_MESSAGES: Record<string, string> = {
+  retry: '한 번 더 눌러주세요. 파일을 받는 사이 공유 권한이 풀렸습니다.',
+  'too-large': '파일이 커서 갤러리 저장을 쓸 수 없습니다. 위 파일명을 눌러 받으세요.',
+  unsupported: '이 브라우저는 파일 공유를 지원하지 않습니다.',
+  failed: '갤러리 저장에 실패했습니다. 위 파일명을 눌러 받으세요.',
 }
 
 function humanSize(bytes: number) {
@@ -41,6 +50,16 @@ export default function JobCard({ initial, autoSave = false, onStatus, saveMode 
   // state 는 화면 갱신용. ref 만 쓰면 안내 문구가 리렌더될 때까지 안 뜬다.
   const fired = useRef(false)
   const [saved, setSaved] = useState(0)
+  // 파일 토큰 → 공유 상태. 한 번에 하나만 진행한다.
+  const [sharing, setSharing] = useState<string | null>(null)
+  const [shareResult, setShareResult] = useState<Record<string, ShareOutcome>>({})
+
+  async function share(file: JobFile) {
+    setSharing(file.token)
+    const outcome = await shareFile(file)
+    setSharing(null)
+    setShareResult((current) => ({ ...current, [file.token]: outcome }))
+  }
 
   useEffect(() => {
     onStatus?.(job.id, job.status, job.progress.percent)
@@ -114,12 +133,31 @@ export default function JobCard({ initial, autoSave = false, onStatus, saveMode 
               다시 받으려면 아래를 누르세요.
             </div>
           )}
-          {job.files.map((file) => (
-            <a key={file.token} className="file" href={`/api/files/${file.token}`} download>
-              <span className="clamp">{file.name}</span>
-              <span className="muted small">{humanSize(file.size)}</span>
-            </a>
-          ))}
+          {job.files.map((file) => {
+            const outcome = shareResult[file.token]
+            const busy = sharing === file.token
+            return (
+              <div key={file.token} className="file-row">
+                <a className="file" href={`/api/files/${file.token}`} download>
+                  <span className="clamp">{file.name}</span>
+                  <span className="muted small">{humanSize(file.size)}</span>
+                </a>
+                {/* 갤러리 저장은 공유 시트를 지원하는 기기에서만 뜬다.
+                    안 되는 곳에 버튼만 있고 눌러도 아무 일 없으면 더 나쁘다. */}
+                {isShareable(file) && (
+                  <button className="small" disabled={busy} onClick={() => void share(file)}>
+                    {busy && <span className="spinner" aria-hidden="true" />}
+                    {busy ? '준비 중…' : '갤러리에 저장'}
+                  </button>
+                )}
+                {outcome && outcome !== 'shared' && outcome !== 'cancelled' && (
+                  <div className="muted small" style={{ flexBasis: '100%' }}>
+                    {SHARE_MESSAGES[outcome]}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
