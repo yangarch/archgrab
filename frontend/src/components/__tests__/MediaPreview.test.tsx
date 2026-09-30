@@ -232,3 +232,47 @@ describe('갤러리로 바로 보내기', () => {
     expect(screen.getByRole('button', { name: /준비 중 40%/ })).toBeInTheDocument()
   })
 })
+
+describe('갤러리 준비 완료 표시', () => {
+  function env() {
+    Object.assign(navigator, { share: vi.fn(), canShare: () => true })
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'share')
+    Reflect.deleteProperty(navigator, 'canShare')
+  })
+
+  it('기본 상태에는 강조가 없다', () => {
+    env()
+    render(
+      <MediaPreview info={makeInfo([makeItem('0')])} downloads={{}} onDownload={vi.fn()} />,
+    )
+    expect(screen.getByRole('button', { name: /1번 항목 갤러리$/ })).not.toHaveClass('is-ready')
+  })
+
+  it('준비가 끝나면 색이 바뀐다 — 문구만으로는 놓치기 쉽다', () => {
+    env()
+    render(
+      <MediaPreview
+        info={makeInfo([makeItem('0')])}
+        downloads={{ 'gallery:0': { status: 'ready', percent: 100 } }}
+        galleryReady={{ '0': { name: 'a.jpg', size: 10, token: 't', content_type: 'image/jpeg' } }}
+        onDownload={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /갤러리로 보내기/ })).toHaveClass('is-ready')
+  })
+
+  it('준비 중에는 아직 강조하지 않는다', () => {
+    env()
+    render(
+      <MediaPreview
+        info={makeInfo([makeItem('0')])}
+        downloads={{ 'gallery:0': { status: 'running', percent: 30 } }}
+        onDownload={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /준비 중 30%/ })).not.toHaveClass('is-ready')
+  })
+})

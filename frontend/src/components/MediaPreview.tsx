@@ -276,7 +276,11 @@ function GalleryButton({ item, state, ready, onStart, onSent }: GalleryButtonPro
   let text = '갤러리'
   let tone = ''
   if (sending) text = '보내는 중…'
-  else if (state?.status === 'ready' || ready) text = '갤러리로 보내기'
+  else if (state?.status === 'ready' || ready) {
+    text = '갤러리로 보내기'
+    // 지금 눌러야 할 때라는 걸 색으로도 알린다. 문구만 바뀌면 놓치기 쉽다.
+    tone = ' is-ready'
+  }
   else if (state?.status === 'running')
     text = state.percent > 0 ? `준비 중 ${Math.round(state.percent)}%` : '준비 중…'
   else if (state?.status === 'starting') text = '요청 중…'

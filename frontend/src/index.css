@@ -309,3 +309,12 @@ select.quality:focus-visible { outline: 2px solid var(--accent); outline-offset:
   line-height: 1;
 }
 .field .clear:hover { background: #2f3542; color: var(--text); }
+
+/* 갤러리로 보낼 준비가 끝난 버튼 — 지금 누르라는 신호 */
+button.is-ready {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+button.is-ready:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
