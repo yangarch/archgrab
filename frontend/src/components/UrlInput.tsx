@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { ApiError, api } from '../api/client'
 import type { MediaInfo } from '../api/types'
@@ -26,6 +26,7 @@ interface Props {
 export default function UrlInput({ onResolved, onNeedsCookies }: Props) {
   const [url, setUrl] = useState('')
   const [busy, setBusy] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<ApiError | null>(null)
 
   const platform = detectPlatform(url)
@@ -48,13 +49,30 @@ export default function UrlInput({ onResolved, onNeedsCookies }: Props) {
   return (
     <form className="card" onSubmit={submit}>
       <div className="row">
-        <input
-          type="url"
-          value={url}
-          placeholder="게시글 · 릴스 · 스토리 링크를 붙여넣으세요"
-          autoFocus
-          onChange={(event) => setUrl(event.target.value)}
-        />
+        <div className="field">
+          <input
+            type="url"
+            value={url}
+            placeholder="게시글 · 릴스 · 스토리 링크를 붙여넣으세요"
+            autoFocus
+            ref={inputRef}
+            onChange={(event) => setUrl(event.target.value)}
+          />
+          {url && (
+            <button
+              type="button"
+              className="clear"
+              aria-label="입력 지우기"
+              onClick={() => {
+                setUrl('')
+                setError(null)
+                inputRef.current?.focus()
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
         <button className="primary" type="submit" disabled={busy || url.trim().length < 8}>
           {busy ? '해석 중…' : '가져오기'}
         </button>

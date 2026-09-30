@@ -89,9 +89,16 @@ describe('완료 시 브라우저 저장', () => {
 })
 
 describe('상태 보고', () => {
-  it('부모에게 상태와 진행률을 올려보낸다 — 누른 버튼이 그걸로 표시한다', () => {
+  it('작업 전체를 올려보낸다 — 진행률뿐 아니라 완료 파일도 필요하다', () => {
     const onStatus = vi.fn()
     render(<JobCard initial={job(THREE)} onStatus={onStatus} />)
-    expect(onStatus).toHaveBeenCalledWith('job-1', 'done', 100)
+    const reported = onStatus.mock.calls[0][0]
+    expect(reported.id).toBe('job-1')
+    expect(reported.status).toBe('done')
+    expect(reported.progress.percent).toBe(100)
+    // 타일의 갤러리 버튼이 이 파일 목록을 공유해야 한다
+    expect(reported.files.map((f: { name: string }) => f.name)).toEqual([
+      'a_1.jpg', 'a_2.jpg', 'a.zip',
+    ])
   })
 })

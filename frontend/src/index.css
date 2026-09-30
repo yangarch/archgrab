@@ -289,3 +289,23 @@ select.quality:focus-visible { outline: 2px solid var(--accent); outline-offset:
 /* 파일 한 줄 = 다운로드 링크 + (지원 기기에서만) 갤러리 저장 */
 .file-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
 .file-row > .file { flex: 1; min-width: 0; }
+
+/* 입력창 안의 지우기 버튼 */
+.field { position: relative; flex: 1; min-width: 0; }
+.field input { padding-right: 40px; }
+.field .clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+}
+.field .clear:hover { background: #2f3542; color: var(--text); }

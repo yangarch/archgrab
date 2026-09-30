@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { ApiError, api } from './api/client'
-import type { DownloadState, Job, JobStatus, MediaInfo, SaveMode } from './api/types'
+import type { DownloadState, Job, JobFile, MediaInfo, SaveMode } from './api/types'
 import CookieSettings from './components/CookieSettings'
 import JobCard from './components/JobCard'
 import LoginGate from './components/LoginGate'
-import MediaPreview from './components/MediaPreview'
+import MediaPreview, { GALLERY_PREFIX } from './components/MediaPreview'
 import UrlInput from './components/UrlInput'
 
 type Session = { loading: true } | { loading: false; authenticated: boolean; configured: boolean }
+
+/** 갤러리 요청키(`gallery:2`)에서 항목 id 를 뽑는다. 아니면 null. */
+function galleryItemId(key: string): string | null {
+  return key.startsWith(GALLERY_PREFIX) ? key.slice(GALLERY_PREFIX.length) : null
+}
 type View = 'main' | 'settings'
 
 export default function App() {
@@ -28,6 +33,10 @@ export default function App() {
   const [activeJob, setActiveJob] = useState<Record<string, string>>({})
   // 작업 id → 브라우저 저장 방식 (zip 하나 vs 낱개 전부)
   const [saveModes, setSaveModes] = useState<Record<string, SaveMode>>({})
+  /* 갤러리로 보낼 준비가 끝난 파일 (항목 id → 파일).
+     iOS 는 탭 직후에만 공유 시트를 허용하는데 서버가 파일을 받는 데 몇 초
+     걸린다. 그래서 받아두고, 사용자가 다시 탭할 때 그 제스처로 공유한다. */
+  const [galleryReady, setGalleryReady] = useState<Record<string, JobFile>>({})
   const [jobError, setJobError] = useState<string | null>(null)
 
   const refreshSession = useCallback(async () => {
@@ -61,6 +70,7 @@ export default function App() {
     key: string,
     mode: SaveMode = 'zip',
     formatIds: Record<string, string> = {},
+    forShare = false,
   ) {
     if (!resolved) return
     setJobError(null)
@@ -77,7 +87,9 @@ export default function App() {
       const job = await api.getJob(job_id)
       setActiveJob((current) => ({ ...current, [key]: job_id }))
       setSaveModes((current) => ({ ...current, [job_id]: mode }))
-      setStarted((current) => new Set(current).add(job_id))
+      // 갤러리로 보낼 작업은 파일 앱에 자동 저장하지 않는다 — 두 곳에 중복으로
+      // 남는다. started 에 넣지 않으면 JobCard 가 자동 저장을 건너뛴다.
+      if (!forShare) setStarted((current) => new Set(current).add(job_id))
       setJobs((current) => [job, ...current])
       mark(key, { status: 'running', percent: 0 })
     } catch (caught) {
@@ -89,18 +101,34 @@ export default function App() {
   /* JobCard 가 이미 SSE 를 구독하고 있으므로 상태를 올려받는다.
      App 에서 따로 구독하면 작업마다 스트림이 두 개가 된다. */
   const handleJobStatus = useCallback(
-    (jobId: string, status: JobStatus, percent: number) => {
+    (job: Job) => {
       // 이 작업이 어떤 버튼의 **현재** 작업인지 확인한다. 아니면 무시한다.
-      const key = Object.keys(activeJob).find((k) => activeJob[k] === jobId)
+      const key = Object.keys(activeJob).find((k) => activeJob[k] === job.id)
       if (!key) return
-      if (status === 'done') {
-        mark(key, { status: 'done', percent: 100 })
-        window.setTimeout(() => mark(key, null), 4000)
-      } else if (status === 'error' || status === 'canceled') {
+      const { status, progress } = job
+
+      if (status === 'error' || status === 'canceled') {
         mark(key, { status: 'error', percent: 0 })
-      } else {
-        mark(key, { status: 'running', percent })
+        return
       }
+      if (status !== 'done') {
+        mark(key, { status: 'running', percent: progress.percent })
+        return
+      }
+
+      const itemId = galleryItemId(key)
+      if (itemId !== null) {
+        // 갤러리 흐름: 여기서 공유하면 제스처 권한이 없어 실패한다.
+        // 파일만 챙겨두고 버튼을 "보내기" 로 바꿔 사용자의 다음 탭을 기다린다.
+        const file = job.files.find((f) => !f.name.endsWith('.zip')) ?? job.files[0]
+        if (file) {
+          setGalleryReady((current) => ({ ...current, [itemId]: file }))
+          mark(key, { status: 'ready', percent: 100 })
+          return
+        }
+      }
+      mark(key, { status: 'done', percent: 100 })
+      window.setTimeout(() => mark(key, null), 4000)
     },
     [activeJob, mark],
   )
@@ -153,7 +181,17 @@ export default function App() {
               key={resolved.url}
               info={resolved.info}
               downloads={downloads}
+              galleryReady={galleryReady}
               onDownload={startDownload}
+              onGallerySent={(itemId, key) => {
+                setGalleryReady((current) => {
+                  const next = { ...current }
+                  delete next[itemId]
+                  return next
+                })
+                mark(key, { status: 'done', percent: 100 })
+                window.setTimeout(() => mark(key, null), 4000)
+              }}
             />
           )}
 

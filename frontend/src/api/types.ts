@@ -107,7 +107,8 @@ export interface JobRequest {
 
 /** 버튼에 표시할 다운로드 진행 상태 */
 export interface DownloadState {
-  status: 'starting' | 'running' | 'done' | 'error'
+  /** ready = 서버가 파일을 받아뒀고, 이제 탭 한 번이면 공유 시트가 열린다 */
+  status: 'starting' | 'running' | 'ready' | 'done' | 'error'
   percent: number
 }
 

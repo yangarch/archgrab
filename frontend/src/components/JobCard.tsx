@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useJobStream } from '../hooks/useJobStream'
-import type { Job, JobFile, JobStatus, SaveMode } from '../api/types'
+import type { Job, JobFile, SaveMode } from '../api/types'
 import { isShareable, shareFile, type ShareOutcome } from '../lib/share'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -38,8 +38,9 @@ interface Props {
   /** 이번 세션에서 버튼으로 시작한 작업만 자동 저장한다.
    *  과거 작업 목록까지 자동 저장하면 새로고침마다 파일이 쏟아진다. */
   autoSave?: boolean
-  /** 상태를 올려보내 누른 버튼이 진행률을 보여줄 수 있게 한다 */
-  onStatus?: (jobId: string, status: JobStatus, percent: number) => void
+  /** 작업 전체를 올려보낸다 — 진행률뿐 아니라 완료된 파일 목록도 필요하다
+   *  (타일의 갤러리 버튼이 그 파일을 공유해야 한다) */
+  onStatus?: (job: Job) => void
   /** 'zip' = zip 하나만, 'each' = 낱개 전부 */
   saveMode?: SaveMode
 }
@@ -62,8 +63,8 @@ export default function JobCard({ initial, autoSave = false, onStatus, saveMode 
   }
 
   useEffect(() => {
-    onStatus?.(job.id, job.status, job.progress.percent)
-  }, [onStatus, job.id, job.status, job.progress.percent])
+    onStatus?.(job)
+  }, [onStatus, job])
 
   useEffect(() => {
     if (!autoSave || fired.current || job.status !== 'done') return

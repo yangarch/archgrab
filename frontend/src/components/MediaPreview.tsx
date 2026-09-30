@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react'
 
-import type { DownloadState, MediaInfo, MediaItem, SaveMode } from '../api/types'
+import type { DownloadState, JobFile, MediaInfo, MediaItem, SaveMode } from '../api/types'
+import { SHARE_SIZE_LIMIT, canShareFiles, shareFile } from '../lib/share'
 
 /** 일괄 버튼의 진행 상태 키 (항목 id 와 섞이지 않는 이름) */
 export const BULK_ZIP_KEY = '__bulk_zip__'
+/** 갤러리 요청키 접두어 — 항목 id 를 붙여 쓴다 (`gallery:2`) */
+export const GALLERY_PREFIX = 'gallery:'
 export const BULK_EACH_KEY = '__bulk_each__'
 
 interface Props {
@@ -15,7 +18,11 @@ interface Props {
     key: string,
     mode: SaveMode,
     formatIds: Record<string, string>,
+    forShare?: boolean,
   ) => void
+  /** 갤러리로 보낼 준비가 끝난 파일 (항목 id → 파일) */
+  galleryReady?: Record<string, JobFile>
+  onGallerySent?: (itemId: string, key: string) => void
 }
 
 function duration(seconds?: number | null) {
@@ -53,7 +60,16 @@ function buttonView(state: DownloadState | undefined, idle: string) {
   }
 }
 
-export default function MediaPreview({ info, downloads, onDownload }: Props) {
+export default function MediaPreview({
+  info,
+  downloads,
+  onDownload,
+  galleryReady = {},
+  onGallerySent,
+}: Props) {
+  // 지원 기기에서만 갤러리 버튼을 띄운다. 데스크톱 크롬은 share 가 있어도
+  // 파일은 못 보내므로 눌러도 아무 일 없는 버튼이 된다.
+  const shareable = canShareFiles()
   const allIds = useMemo(() => info.items.map((item) => item.id), [info])
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allIds))
   /* 항목별로 고른 포맷. 유튜브는 한 영상에 화질이 9개까지 오므로 고를 수 있어야
@@ -202,6 +218,21 @@ export default function MediaPreview({ info, downloads, onDownload }: Props) {
                   {view.busy && <span className="spinner" aria-hidden="true" />}
                   {view.text}
                 </button>
+
+                {/* 갤러리로 바로 보내기. 파일이 준비되면 버튼이 "보내기" 로
+                    바뀐다 — iOS 는 탭 직후에만 공유 시트를 열어주므로 준비와
+                    공유를 한 번의 탭으로 묶을 수 없다. */}
+                {shareable && (format?.filesize ?? 0) <= SHARE_SIZE_LIMIT && (
+                  <GalleryButton
+                    item={item}
+                    state={downloads[GALLERY_PREFIX + item.id]}
+                    ready={galleryReady[item.id]}
+                    onStart={() =>
+                      onDownload([item.id], GALLERY_PREFIX + item.id, 'each', formatIds, true)
+                    }
+                    onSent={() => onGallerySent?.(item.id, GALLERY_PREFIX + item.id)}
+                  />
+                )}
               </div>
             </div>
           )
@@ -213,5 +244,66 @@ export default function MediaPreview({ info, downloads, onDownload }: Props) {
         {info.used_cookies ? ' · 쿠키 사용' : ' · 쿠키 없음'} · 원본 화질 그대로 받습니다
       </div>
     </div>
+  )
+}
+
+
+interface GalleryButtonProps {
+  item: MediaItem
+  state: DownloadState | undefined
+  ready: JobFile | undefined
+  onStart: () => void
+  onSent: () => void
+}
+
+/** `갤러리` → (준비) → `갤러리로 보내기` → `저장됨 ✓` */
+function GalleryButton({ item, state, ready, onStart, onSent }: GalleryButtonProps) {
+  const [sending, setSending] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  async function send() {
+    if (!ready) return
+    setSending(true)
+    setProblem(null)
+    const outcome = await shareFile(ready)
+    setSending(false)
+    if (outcome === 'shared') onSent()
+    else if (outcome === 'retry') setProblem('한 번 더 눌러주세요')
+    else if (outcome !== 'cancelled') setProblem('갤러리 저장에 실패했습니다')
+  }
+
+  const busy = sending || state?.status === 'starting' || state?.status === 'running'
+  let text = '갤러리'
+  let tone = ''
+  if (sending) text = '보내는 중…'
+  else if (state?.status === 'ready' || ready) text = '갤러리로 보내기'
+  else if (state?.status === 'running')
+    text = state.percent > 0 ? `준비 중 ${Math.round(state.percent)}%` : '준비 중…'
+  else if (state?.status === 'starting') text = '요청 중…'
+  else if (state?.status === 'done') {
+    text = '저장됨 ✓'
+    tone = ' is-done'
+  } else if (state?.status === 'error') {
+    text = '실패 · 다시'
+    tone = ' is-error'
+  }
+
+  return (
+    <>
+      <button
+        className={`small dl${tone}`}
+        disabled={busy}
+        aria-busy={busy}
+        /* 고정 문구를 쓰면 접근성 이름이 상태를 가린다 — 화면에는
+           "준비 중 40%" 가 보이는데 스크린리더는 계속 "갤러리에 저장" 을
+           읽는다. 항목 번호만 앞에 붙이고 나머지는 실제 문구를 쓴다. */
+        aria-label={`${item.index + 1}번 항목 ${text}`}
+        onClick={() => (ready ? void send() : onStart())}
+      >
+        {busy && <span className="spinner" aria-hidden="true" />}
+        {text}
+      </button>
+      {problem && <div className="muted small" style={{ flexBasis: '100%' }}>{problem}</div>}
+    </>
   )
 }

@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import MediaPreview, { BULK_EACH_KEY, BULK_ZIP_KEY } from '../MediaPreview'
 import { makeInfo, makeItem, makeMultiFormatItem } from '../../test/factories'
@@ -139,5 +139,96 @@ describe('화질 선택 (유튜브처럼 포맷이 여럿인 경우)', () => {
     await user.click(screen.getByRole('button', { name: /낱개로 2개/ }))
 
     expect(onDownload.mock.calls[0][3]).toEqual({ '0': '137', '1': 'original' })
+  })
+})
+
+describe('갤러리로 바로 보내기', () => {
+  const shareMock = vi.fn()
+
+  function galleryEnv(supported = true) {
+    Object.assign(navigator, {
+      share: shareMock.mockResolvedValue(undefined),
+      canShare: () => supported,
+    })
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'share')
+    Reflect.deleteProperty(navigator, 'canShare')
+    shareMock.mockReset()
+  })
+
+  function renderWith(props: Partial<Parameters<typeof MediaPreview>[0]> = {}) {
+    const onDownload = vi.fn()
+    const onGallerySent = vi.fn()
+    render(
+      <MediaPreview
+        info={makeInfo([makeItem('0')])}
+        downloads={{}}
+        onDownload={onDownload}
+        onGallerySent={onGallerySent}
+        {...props}
+      />,
+    )
+    return { onDownload, onGallerySent, user: userEvent.setup() }
+  }
+
+  it('지원하지 않는 기기에는 버튼을 띄우지 않는다', () => {
+    galleryEnv(false)
+    renderWith()
+    expect(screen.queryByRole('button', { name: /갤러리/ })).not.toBeInTheDocument()
+  })
+
+  it('지원 기기에는 갤러리 버튼이 뜬다', () => {
+    galleryEnv()
+    renderWith()
+    expect(screen.getByRole('button', { name: /1번 항목 갤러리/ })).toBeInTheDocument()
+  })
+
+  it('큰 파일에는 띄우지 않는다 — 메모리를 통째로 거친다', () => {
+    galleryEnv()
+    const big = makeItem('0')
+    big.formats[0].filesize = 200 * 1024 * 1024
+    renderWith({ info: makeInfo([big]) })
+    expect(screen.queryByRole('button', { name: /갤러리/ })).not.toBeInTheDocument()
+  })
+
+  it('첫 탭은 공유가 아니라 작업 시작이다 — 파일이 아직 없다', async () => {
+    galleryEnv()
+    const { onDownload, user } = renderWith()
+    await user.click(screen.getByRole('button', { name: /1번 항목 갤러리$/ }))
+
+    expect(onDownload).toHaveBeenCalledWith(['0'], 'gallery:0', 'each', { '0': 'original' }, true)
+    expect(shareMock).not.toHaveBeenCalled()
+  })
+
+  it('준비되면 문구가 보내기로 바뀐다', () => {
+    galleryEnv()
+    renderWith({
+      galleryReady: { '0': { name: 'a.jpg', size: 10, token: 't', content_type: 'image/jpeg' } },
+      downloads: { 'gallery:0': { status: 'ready', percent: 100 } },
+    })
+    expect(screen.getByRole('button', { name: /갤러리로 보내기/ })).toBeInTheDocument()
+  })
+
+  it('준비 상태에서 탭하면 공유 시트를 연다', async () => {
+    galleryEnv()
+    const file = { name: 'a.jpg', size: 10, token: 't', content_type: 'image/jpeg' }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      blob: async () => new Blob([new Uint8Array(4)], { type: 'image/jpeg' }),
+    }))
+    const { onGallerySent, user } = renderWith({ galleryReady: { '0': file } })
+
+    await user.click(screen.getByRole('button', { name: /갤러리로 보내기/ }))
+    expect(shareMock).toHaveBeenCalledOnce()
+    expect(onGallerySent).toHaveBeenCalledWith('0', 'gallery:0')
+    vi.unstubAllGlobals()
+  })
+
+  it('진행률을 버튼에 보여준다', () => {
+    galleryEnv()
+    renderWith({ downloads: { 'gallery:0': { status: 'running', percent: 40 } } })
+    expect(screen.getByRole('button', { name: /준비 중 40%/ })).toBeInTheDocument()
   })
 })
