@@ -5,10 +5,19 @@ import type { DownloadState, Job, JobFile, MediaInfo, SaveMode } from './api/typ
 import CookieSettings from './components/CookieSettings'
 import JobCard from './components/JobCard'
 import LoginGate from './components/LoginGate'
-import MediaPreview, { GALLERY_PREFIX } from './components/MediaPreview'
+import MediaPreview, {
+  BULK_EACH_KEY,
+  BULK_ZIP_KEY,
+  GALLERY_PREFIX,
+} from './components/MediaPreview'
 import UrlInput from './components/UrlInput'
 
 type Session = { loading: true } | { loading: false; authenticated: boolean; configured: boolean }
+
+/** 일괄 받기 버튼의 요청키인가 (항목 단위와 구분한다). */
+function isBulkKey(key: string): boolean {
+  return key === BULK_EACH_KEY || key === BULK_ZIP_KEY
+}
 
 /** 갤러리 요청키(`gallery:2`)에서 항목 id 를 뽑는다. 아니면 null. */
 function galleryItemId(key: string): string | null {
@@ -128,7 +137,10 @@ export default function App() {
         }
       }
       mark(key, { status: 'done', percent: 100 })
-      window.setTimeout(() => mark(key, null), 4000)
+      // 항목 버튼의 완료 표시는 남긴다 — 무엇을 이미 받았는지 알 수 있어야 한다.
+      // 일괄 버튼만 되돌린다. 그 문구는 현재 선택 개수를 보여줘야 하므로
+      // "저장됨" 이 계속 붙어 있으면 선택을 바꿔도 개수가 안 보인다.
+      if (isBulkKey(key)) window.setTimeout(() => mark(key, null), 4000)
     },
     [activeJob, mark],
   )
@@ -170,6 +182,11 @@ export default function App() {
             onResolved={(info, url) => {
               setResolved({ info, url })
               setJobError(null)
+              // 항목 id 는 게시글마다 0,1,2… 로 겹친다. 이전 게시글의 완료
+              // 표시를 남겨두면 엉뚱한 타일에 "저장됨" 이 붙는다.
+              setDownloads({})
+              setGalleryReady({})
+              setActiveJob({})
             }}
             onNeedsCookies={() => setView('settings')}
           />
@@ -190,7 +207,6 @@ export default function App() {
                   return next
                 })
                 mark(key, { status: 'done', percent: 100 })
-                window.setTimeout(() => mark(key, null), 4000)
               }}
             />
           )}
