@@ -15,6 +15,7 @@ from app.core.errors import ErrorCode, ArchGrabError
 
 class Platform(StrEnum):
     INSTAGRAM = "instagram"
+    THREADS = "threads"
     X = "x"
     YOUTUBE = "youtube"
 
@@ -47,6 +48,8 @@ class ParsedUrl:
 
 
 INSTAGRAM_HOSTS = frozenset({"instagram.com", "instagr.am", "ig.me"})
+# threads.net 은 threads.com 으로 리다이렉트된다 (확인함). 둘 다 받는다.
+THREADS_HOSTS = frozenset({"threads.com", "threads.net"})
 X_HOSTS = frozenset({"x.com", "twitter.com", "t.co", "vxtwitter.com", "fixupx.com"})
 YOUTUBE_HOSTS = frozenset({"youtube.com", "youtu.be", "youtube-nocookie.com"})
 
@@ -95,6 +98,8 @@ def parse_url(raw: str) -> ParsedUrl:
 
     if host in INSTAGRAM_HOSTS:
         return _parse_instagram(raw, host, segs)
+    if host in THREADS_HOSTS:
+        return _parse_threads(raw, segs)
     if host in X_HOSTS:
         return _parse_x(raw, host, segs)
     if host in YOUTUBE_HOSTS:
@@ -165,6 +170,59 @@ def _instagram_media(raw: str, segment: str, code: str, *, username: str | None)
         Platform.INSTAGRAM, kind, code,
         f"https://www.instagram.com/{path}/{code}/", username=username,
     )
+
+
+# 스레드 사용자명. 인스타 숏코드 패턴(최소 5자)을 재사용하면 네 글자 계정
+# (@zuck)이 걸러진다.
+_THREADS_USERNAME = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+
+
+def _parse_threads(raw: str, segs: list[str]) -> ParsedUrl:
+    """스레드 주소 4가지 형태를 모두 받는다 (전부 실제 응답으로 확인함).
+
+    `/@{user}/post/{code}` · `/{user}/post/{code}` · `/t/{code}` · `/@{user}`
+
+    주소의 사용자명은 **장식이다**. 남의 사용자명을 붙여도 같은 게시글이
+    내려온다(확인함). 권위 있는 건 code 뿐이라 key 로 쓰고, 엔진은 사용자명이
+    필요 없는 `/t/{code}` 로 요청한다.
+    """
+    if not segs:
+        raise _unsupported(raw)
+
+    head = segs[0]
+    lowered = [s.lower() for s in segs]
+
+    # /t/{code} — 사용자명 없이도 서버가 대상을 해결해준다
+    if lowered[0] == "t" and len(segs) >= 2:
+        return _threads_post(raw, segs[1], username=None)
+
+    # /@{user}/post/{code} , /{user}/post/{code}
+    if len(segs) >= 3 and lowered[1] == "post":
+        return _threads_post(raw, segs[2], username=head.removeprefix("@") or None)
+
+    # /@{user} — @ 가 붙은 형태만 프로필로 본다. @ 없는 한 조각짜리 주소를
+    # 사용자명으로 받으면 /search 같은 예약 경로까지 끌어안게 된다. @ 가 붙으면
+    # 예약 경로와 겹칠 수 없으므로 @t · @about 같은 실제 계정도 그대로 통과한다.
+    if len(segs) == 1 and head.startswith("@"):
+        user = head.removeprefix("@")
+        if _THREADS_USERNAME.match(user):
+            return ParsedUrl(
+                Platform.THREADS, Kind.PROFILE, user,
+                f"https://www.threads.com/@{user}", username=user,
+            )
+
+    raise _unsupported(raw)
+
+
+def _threads_post(raw: str, code: str, *, username: str | None) -> ParsedUrl:
+    if not _IG_SHORTCODE.match(code):
+        raise _unsupported(raw)
+    url = (
+        f"https://www.threads.com/@{username}/post/{code}"
+        if username
+        else f"https://www.threads.com/t/{code}"
+    )
+    return ParsedUrl(Platform.THREADS, Kind.POST, code, url, username=username)
 
 
 def _parse_x(raw: str, host: str, segs: list[str]) -> ParsedUrl:

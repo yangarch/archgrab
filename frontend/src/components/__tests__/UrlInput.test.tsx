@@ -40,3 +40,18 @@ describe('입력 지우기', () => {
     expect(screen.queryByText('인스타그램')).not.toBeInTheDocument()
   })
 })
+
+describe('플랫폼 배지', () => {
+  it.each([
+    ['https://www.threads.com/@zuck/post/Ddt7cL5EfUG', '스레드'],
+    ['https://www.threads.net/@zuck/post/Ddt7cL5EfUG', '스레드'],
+    ['https://www.threads.com/t/Ddt7cL5EfUG', '스레드'],
+    ['https://www.instagram.com/p/AAA/', '인스타그램'],
+    ['https://x.com/a/status/1', 'X'],
+    ['https://www.youtube.com/watch?v=aaaaaaaaaaa', '유튜브'],
+  ])('%s → %s', async (url, label) => {
+    const { user, input } = setup()
+    await user.type(input, url)
+    expect(screen.getByText(label)).toBeInTheDocument()
+  })
+})

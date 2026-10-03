@@ -19,7 +19,7 @@ class ErrorCode(StrEnum):
 
 
 MESSAGES: dict[ErrorCode, str] = {
-    ErrorCode.UNSUPPORTED: "지원하지 않는 주소입니다. 인스타그램·X·유튜브 링크를 넣어주세요.",
+    ErrorCode.UNSUPPORTED: "지원하지 않는 주소입니다. 인스타그램·스레드·X·유튜브 링크를 넣어주세요.",
     ErrorCode.LOGIN_REQUIRED: "로그인이 필요한 콘텐츠입니다. 설정에서 쿠키를 등록해주세요.",
     ErrorCode.PRIVATE: "비공개 계정이거나 접근 권한이 없는 콘텐츠입니다.",
     ErrorCode.NOT_FOUND: "삭제되었거나 존재하지 않는 콘텐츠입니다.",

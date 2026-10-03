@@ -1,4 +1,4 @@
-export type Platform = 'instagram' | 'x' | 'youtube'
+export type Platform = 'instagram' | 'threads' | 'x' | 'youtube'
 
 export type MediaType = 'video' | 'image' | 'audio'
 

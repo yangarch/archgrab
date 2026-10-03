@@ -5,8 +5,9 @@ import type { CookieStatus } from '../api/types'
 
 const PLATFORMS: { id: string; label: string; hint: string }[] = [
   { id: 'instagram', label: '인스타그램', hint: '스토리·비공개 게시글에 필요합니다' },
-  { id: 'x', label: 'X', hint: 'M2 에서 사용합니다' },
-  { id: 'youtube', label: '유튜브', hint: 'M3 에서 사용합니다' },
+  { id: 'threads', label: '스레드', hint: '비공개 계정 게시글에 필요합니다' },
+  { id: 'x', label: 'X', hint: '비공개·민감 콘텐츠에 필요합니다' },
+  { id: 'youtube', label: '유튜브', hint: '연령 제한·차단 시 필요합니다' },
 ]
 
 export default function CookieSettings() {

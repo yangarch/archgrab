@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from app.core.errors import ErrorCode, ArchGrabError
 from app.core.url import Platform
-from app.extractors import instagram, x, youtube
+from app.extractors import instagram, threads, x, youtube
 from app.extractors.base import Extractor
 
 _EXTRACTORS: dict[Platform, Extractor] = {
     Platform.INSTAGRAM: instagram.extractor,
+    Platform.THREADS: threads.extractor,
     Platform.X: x.extractor,
     Platform.YOUTUBE: youtube.extractor,
 }

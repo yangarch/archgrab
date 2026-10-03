@@ -5,6 +5,7 @@ import type { MediaInfo } from '../api/types'
 
 const PLATFORM_LABEL: Record<string, string> = {
   instagram: '인스타그램',
+  threads: '스레드',
   x: 'X',
   youtube: '유튜브',
 }
@@ -13,6 +14,7 @@ const PLATFORM_LABEL: Record<string, string> = {
 function detectPlatform(url: string): string | null {
   const text = url.toLowerCase()
   if (text.includes('instagram.com') || text.includes('instagr.am')) return 'instagram'
+  if (text.includes('threads.com') || text.includes('threads.net')) return 'threads'
   if (text.includes('x.com') || text.includes('twitter.com')) return 'x'
   if (text.includes('youtube.com') || text.includes('youtu.be')) return 'youtube'
   return null
