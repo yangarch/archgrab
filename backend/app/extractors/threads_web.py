@@ -21,9 +21,10 @@ gallery-dl(1.32.12)과 yt-dlp(2026.08.19) **둘 다 스레드 추출기가 없�
    정확히 일치하는 노드만 쓴다.
 2. **없는 게시글도 HTTP 200 이다.** 404 가 오지 않는다. 일치 노드가 0개인 것이
    NOT_FOUND 신호다. 텍스트 전용 글과는 구분된다 — 그쪽은 노드가 있고 미디어만 없다.
-3. **원본 이미지가 webp 로 온다.** Accept 헤더를 세 가지로 바꿔도 전부
-   `image/webp` 였다. 인스타는 jpeg 다. 확장자를 URL 경로에서 뽑되 실제
-   content-type 과 어긋나지 않게 webp 를 그대로 쓴다.
+3. **원본 이미지의 형식이 업로드마다 다르다.** 어떤 글은 webp 로 오고(Accept
+   헤더를 세 가지로 바꿔도 전부 `image/webp` 였다) 어떤 글은 jpg 로 온다 —
+   실물 두 건으로 확인했다. 그래서 형식을 가정하지 않고 **URL 경로의 확장자를
+   그대로 쓴다**. 하나로 단정하면 절반이 틀린 이름으로 저장된다.
 4. **동영상 노드의 image_versions2 는 썸네일뿐이다.** 최대 640x800 인데 실제
    영상은 1080x1350 이었다. 동영상은 video_versions 만 쓴다. 그리고 type
    101/102/103 은 실측에서 **바이트 수까지 같은 파일**이라 화질 선택지가 아니다.
@@ -226,8 +227,9 @@ def _image_formats(node: dict[str, Any]) -> list[FormatOption]:
     return [
         FormatOption(
             id="original",
-            # 함정 3: 스레드 원본은 webp 다. 경로의 확장자를 그대로 쓴다.
-            ext=_extension(url, "webp"),
+            # 함정 3: 형식이 업로드마다 다르다(webp·jpg 둘 다 실측). 가정하지
+            # 않고 경로의 확장자를 그대로 쓴다.
+            ext=_extension(url, "jpg"),
             # 후보가 직접 들고 있는 크기다 (실측에서 original_* 와 일치).
             width=candidate.get("width") or node.get("original_width"),
             height=candidate.get("height") or node.get("original_height"),
@@ -276,7 +278,7 @@ def _video_formats(node: dict[str, Any]) -> list[FormatOption]:
 
 
 def _thumbnail(node: dict[str, Any]) -> str | None:
-    """썸네일은 작은 것으로 고른다 — 원본 webp 를 그리면 느리다."""
+    """썸네일은 작은 것으로 고른다 — 2160px 원본을 그리면 느리다."""
     candidates = ((node.get("image_versions2") or {}).get("candidates")) or []
     sized = [
         c for c in candidates

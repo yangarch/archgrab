@@ -14,6 +14,7 @@ og:url 도 함께 본다.
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Callable
 
@@ -66,10 +67,16 @@ def _default_fetch(url: str) -> tuple[str, str]:
 
 
 def _from_body(body: str) -> str | None:
+    """canonical / og:url 은 HTML 이스케이프되어 있을 수 있다.
+
+    스레드는 경로에 `@` 가 들어가고 그걸 `&#064;` 로 내보낸다. 풀지 않으면 `#`
+    이 프래그먼트 시작으로 해석돼 경로가 통째로 사라진다 — 지금은 302 가 있어서
+    본문을 볼 일이 없지만, 리다이렉트가 사라지면 이 폴백이 유일한 길이 된다.
+    """
     for pattern in (_CANONICAL, _OG_URL):
         match = pattern.search(body)
         if match:
-            return match.group(1)
+            return html.unescape(match.group(1))
     return None
 
 

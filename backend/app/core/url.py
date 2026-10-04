@@ -192,6 +192,15 @@ def _parse_threads(raw: str, segs: list[str]) -> ParsedUrl:
     head = segs[0]
     lowered = [s.lower() for s in segs]
 
+    # /share/{토큰} — 모바일 앱의 공유 버튼이 주는 형태다. 토큰은 숏코드가
+    # 아니라 별개 식별자라(실측: 9자 토큰 → 11자 숏코드) 추적해야 알 수 있다.
+    # 추적 없이 엔진에 넘기면 엉뚱한 글을 찾다가 "찾을 수 없습니다"가 나간다.
+    if lowered[0] == "share" and len(segs) >= 2:
+        return ParsedUrl(
+            Platform.THREADS, Kind.SHARE, segs[-1],
+            f"https://www.threads.com/{'/'.join(segs)}/", needs_redirect=True,
+        )
+
     # /t/{code} — 사용자명 없이도 서버가 대상을 해결해준다
     if lowered[0] == "t" and len(segs) >= 2:
         return _threads_post(raw, segs[1], username=None)

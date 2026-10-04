@@ -169,7 +169,22 @@ def test_original_image_is_the_untokenized_candidate() -> None:
     chosen = formats[0]
     assert (chosen.width, chosen.height) == (2160, 2700)
     assert "stp=" not in chosen.url
-    assert chosen.ext == "webp"       # 스레드 원본은 webp 다 (인스타는 jpeg)
+
+
+@pytest.mark.parametrize(("name", "ext"), [("original.webp", "webp"), ("original.jpg", "jpg")])
+def test_extension_comes_from_the_url_not_from_an_assumption(name: str, ext: str) -> None:
+    """형식을 가정하면 절반이 틀린 이름으로 저장된다.
+
+    실물 두 건에서 하나는 webp, 하나는 jpg 로 왔다. 플랫폼 단위로 단정할 수 없다.
+    """
+    node = {
+        "code": CODE,
+        "media_type": 1,
+        "original_width": 1203,
+        "original_height": 848,
+        "image_versions2": {"candidates": [_img(1203, 848, None, name=name)]},
+    }
+    assert threads_web._image_formats(node)[0].ext == ext
 
 
 def test_size_token_beats_declared_area_when_the_two_disagree() -> None:
@@ -339,3 +354,69 @@ def test_real_threads_post_is_readable_without_login() -> None:
         else:
             # 동영상은 해상도를 주장하지 않는다
             assert item.width is None and item.height is None
+
+
+# ---- 공유 링크 (/share/{토큰}) ------------------------------------------
+
+SHARE_TOKEN = "SH4r3tok0n"   # 합성 토큰 — 추적은 주입한 fetch 로 흉내낸다
+SHARE_URL = f"https://www.threads.com/share/{SHARE_TOKEN}/"
+
+
+def test_share_link_is_marked_for_redirect_not_treated_as_a_shortcode() -> None:
+    """공유 토큰은 숏코드가 아니다 — 실물에서 9자 토큰이 11자 숏코드를 가리켰다.
+
+    추적하지 않고 엔진에 넘기면 그 토큰으로 글을 찾다가 "찾을 수 없습니다"가
+    나간다. 모바일 공유 버튼이 주는 형태라 실사용에서 가장 먼저 부딪친다.
+    """
+    parsed = parse_url(SHARE_URL)
+    assert parsed.platform is Platform.THREADS
+    assert parsed.kind is Kind.SHARE
+    assert parsed.needs_redirect is True
+    assert parsed.key == SHARE_TOKEN
+
+
+def test_share_link_resolves_to_the_real_post() -> None:
+    from app.core.link import follow
+
+    # 실물에서는 302 로 ?xmt=... 추적 파라미터가 붙은 주소가 온다
+    target = f"https://www.threads.com/@zuck/post/{CODE}?xmt=AQG0"
+    resolved = follow(parse_url(SHARE_URL), lambda _url: (target, ""))
+
+    assert resolved.kind is Kind.POST
+    assert resolved.key == CODE
+    assert resolved.username == "zuck"
+    assert resolved.needs_redirect is False   # 엔진에 넘겨도 안전하다
+    assert "xmt=" not in resolved.url         # 추적 파라미터는 제거된다
+
+
+def test_share_link_falls_back_to_html_escaped_canonical() -> None:
+    """스레드의 canonical 은 경로의 @ 를 &#064; 로 내보낸다.
+
+    풀지 않으면 `#` 이 프래그먼트 시작으로 해석돼 경로가 통째로 사라진다. 지금은
+    302 가 있어서 본문을 볼 일이 없지만, 리다이렉트가 사라지면 이게 유일한 길이다.
+    """
+    from app.core.link import follow
+
+    body = (
+        '<link rel="canonical" '
+        f'href="https://www.threads.com/&#064;zuck/post/{CODE}"/>'
+    )
+    # 리다이렉트가 없고(공유 주소 그대로) 본문만 있는 상황
+    resolved = follow(parse_url(SHARE_URL), lambda url: (url, body))
+
+    assert resolved.kind is Kind.POST
+    assert resolved.key == CODE
+    assert resolved.username == "zuck"
+
+
+def test_unfollowed_share_link_is_refused_rather_than_guessed() -> None:
+    """추적이 실패하면 공유 토큰을 숏코드로 넘기지 않고 거부한다.
+
+    넘기면 엔진이 그 토큰으로 글을 찾다가 "삭제되었거나 비공개"라는 틀린 안내를
+    낸다 — 실제로는 멀쩡한 공개 글이다.
+    """
+    from app.core.link import follow
+
+    with pytest.raises(ArchGrabError) as exc:
+        follow(parse_url(SHARE_URL), lambda url: (url, "<html></html>"))
+    assert exc.value.code is ErrorCode.UNSUPPORTED
