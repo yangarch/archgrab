@@ -5,14 +5,37 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
+from app.core.errors import ArchGrabError, ErrorCode
 from app.core.models import FormatOption, MediaInfo, MediaItem
-from app.core.url import ParsedUrl
+from app.core.url import Kind, ParsedUrl
 from app.extractors.base import ProgressCallback, ProgressEvent
 from app.media import fetcher
 from app.media.storage import safe_name
+
+
+def reject_unsupported_kinds(parsed: ParsedUrl, messages: Mapping[Kind, str]) -> None:
+    """지원하지 않는 종류면 엔진을 때리기 전에 분명하게 거절한다.
+
+    파서는 주소 모양만 보므로 프로필·재생목록처럼 **파싱은 되지만 처리기가 없는**
+    종류를 통과시킨다. 그대로 엔진에 넘기면 엉뚱한 실패가 나고, 그 문구가 오류
+    분류기에서 잘못된 원인으로 접힌다. 실제로 겪은 두 경우:
+
+    - 인스타 프로필 → 사용자명을 숏코드로 착각해 엉뚱한 media_id 가 만들어지고
+      "비공개·삭제·제한… 쿠키를 등록하면 접근할 수 있습니다"가 나갔다. 쿠키를
+      등록해도 안 되는데 사용자를 등록하러 보냈다.
+    - 유튜브 재생목록 → yt-dlp 가 항목을 순회하다 볼 수 없는 영상 하나를 만나고
+      "삭제되었거나 존재하지 않는 콘텐츠입니다"가 나갔다. 재생목록은 멀쩡했다.
+
+    그래서 거절을 엔진 **앞**에 두고, 플랫폼마다 선언으로 남긴다. 새 플랫폼이
+    같은 걸 빠뜨리지 않도록 이 한 곳에 모은다.
+    """
+    message = messages.get(parsed.kind)
+    if message:
+        raise ArchGrabError(ErrorCode.UNSUPPORTED, message)
 
 
 def fetch_pairs(

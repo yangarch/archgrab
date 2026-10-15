@@ -30,7 +30,13 @@ from app.core.models import FormatOption, MediaInfo, MediaItem
 from app.core.url import Kind, ParsedUrl
 from app.extractors import gallerydl_engine, instagram_web, ytdlp_engine
 from app.extractors.base import ProgressCallback, Selection, noop_progress
-from app.extractors.common import fetch_pairs, first_text, media_filename, parse_timestamp
+from app.extractors.common import (
+    fetch_pairs,
+    first_text,
+    media_filename,
+    parse_timestamp,
+    reject_unsupported_kinds,
+)
 from app.extractors.gallerydl_engine import GalleryEntry
 from app.media.storage import safe_name
 
@@ -41,6 +47,12 @@ ORIGINAL_FORMAT_ID = "original"
 # 쿠키가 없으면 애초에 안 되는 종류 — 엔진을 때리기 전에 걸러낸다.
 # 스토리는 설계상 로그인한 사용자에게만 보이므로 익명 경로가 존재하지 않는다.
 COOKIE_REQUIRED_KINDS = frozenset({Kind.STORY, Kind.HIGHLIGHT})
+
+# 파싱은 되지만 처리기가 없는 종류. 엔진에 넘기면 사용자명을 숏코드로 착각해
+# 엉뚱한 media_id 가 만들어지고 "쿠키를 등록하세요"라는 틀린 안내가 나간다.
+UNSUPPORTED_KINDS = {
+    Kind.PROFILE: "프로필 주소는 아직 지원하지 않습니다. 개별 게시글 주소를 넣어주세요.",
+}
 
 GALLERY_DL = "gallery-dl"
 WEB = "instagram-web"
@@ -99,6 +111,7 @@ class InstagramExtractor:
     # ---- 해석 ------------------------------------------------------------
     def probe(self, parsed: ParsedUrl) -> MediaInfo:
         with secrets_store.cookie_file(NAME) as cookies:
+            reject_unsupported_kinds(parsed, UNSUPPORTED_KINDS)
             self._require_cookies(parsed, cookies)
             failures: list[ArchGrabError] = []
 
@@ -141,6 +154,7 @@ class InstagramExtractor:
         progress: ProgressCallback = noop_progress,
     ) -> list[Path]:
         with secrets_store.cookie_file(NAME) as cookies:
+            reject_unsupported_kinds(parsed, UNSUPPORTED_KINDS)
             self._require_cookies(parsed, cookies)
             failures: list[ArchGrabError] = []
 

@@ -21,14 +21,20 @@ from app.core.models import FormatOption, MediaInfo, MediaItem
 from app.core.url import Kind, ParsedUrl
 from app.extractors import threads_web
 from app.extractors.base import ProgressCallback, Selection, noop_progress
-from app.extractors.common import fetch_pairs, media_filename
+from app.extractors.common import (
+    fetch_pairs,
+    media_filename,
+    reject_unsupported_kinds,
+)
 
 NAME = "threads"
 REFERER = "https://www.threads.com/"
 
-PROFILE_UNSUPPORTED = (
-    "프로필 주소는 아직 지원하지 않습니다. 개별 게시글 주소를 넣어주세요."
-)
+# 파싱은 되지만 처리기가 없는 종류. 선언은 플랫폼마다, 거절은 common 한 곳에서.
+UNSUPPORTED_KINDS = {
+    Kind.PROFILE: "프로필 주소는 아직 지원하지 않습니다. 개별 게시글 주소를 넣어주세요.",
+}
+PROFILE_UNSUPPORTED = UNSUPPORTED_KINDS[Kind.PROFILE]
 
 
 def _pick_format(item: MediaItem, wanted_id: str | None) -> FormatOption | None:
@@ -48,7 +54,7 @@ class ThreadsExtractor:
     name = NAME
 
     def probe(self, parsed: ParsedUrl) -> MediaInfo:
-        self._reject_profile(parsed)
+        reject_unsupported_kinds(parsed, UNSUPPORTED_KINDS)
         with secrets_store.cookie_file(NAME) as cookies:
             return threads_web.probe(parsed, cookies)
 
@@ -59,7 +65,7 @@ class ThreadsExtractor:
         dest: Path,
         progress: ProgressCallback = noop_progress,
     ) -> list[Path]:
-        self._reject_profile(parsed)
+        reject_unsupported_kinds(parsed, UNSUPPORTED_KINDS)
         with secrets_store.cookie_file(NAME) as cookies:
             max_age = get_settings().resolve_cache_seconds
 
@@ -114,11 +120,6 @@ class ThreadsExtractor:
                 chosen.url,
             ))
         return pairs
-
-    @staticmethod
-    def _reject_profile(parsed: ParsedUrl) -> None:
-        if parsed.kind is Kind.PROFILE:
-            raise ArchGrabError(ErrorCode.UNSUPPORTED, PROFILE_UNSUPPORTED)
 
 
 extractor = ThreadsExtractor()

@@ -23,11 +23,19 @@ from app.config import get_settings
 from app.core import secrets_store
 from app.core.errors import ArchGrabError, ErrorCode
 from app.core.models import FormatOption, MediaInfo
-from app.core.url import ParsedUrl
+from app.core.url import Kind, ParsedUrl
+from app.extractors.common import reject_unsupported_kinds
 from app.extractors import ytdlp_engine
 from app.extractors.base import ProgressCallback, Selection, noop_progress
 
 NAME = "youtube"
+
+# 파싱은 되지만 처리기가 없는 종류. 그대로 yt-dlp 에 넘기면 항목을 순회하다
+# 볼 수 없는 영상 하나를 만나고, 그 문구가 "삭제되었거나 존재하지 않는
+# 콘텐츠입니다"로 접힌다 — 재생목록은 멀쩡한데 틀린 안내가 나간다.
+UNSUPPORTED_KINDS = {
+    Kind.PLAYLIST: "재생목록 주소는 아직 지원하지 않습니다. 개별 영상 주소를 넣어주세요.",
+}
 PREFIX = "youtube"
 
 AUDIO_NOTE = "오디오만"
@@ -167,6 +175,7 @@ class YouTubeExtractor:
     name = NAME
 
     def probe(self, parsed: ParsedUrl) -> MediaInfo:
+        reject_unsupported_kinds(parsed, UNSUPPORTED_KINDS)
         with secrets_store.cookie_file(NAME) as cookies:
             raw, degraded = _extract(parsed, cookies)
             info = to_media_info(parsed, raw, used_cookies=cookies is not None)
@@ -182,6 +191,7 @@ class YouTubeExtractor:
         dest: Path,
         progress: ProgressCallback = noop_progress,
     ) -> list[Path]:
+        reject_unsupported_kinds(parsed, UNSUPPORTED_KINDS)
         with secrets_store.cookie_file(NAME) as cookies:
             # 유튜브는 완결 포맷이 없어 항상 mux 가 필요하다. yt-dlp 에 맡기고
             # 합칠 때는 스트림 복사만 한다(-c copy) — 재인코딩 없음.
