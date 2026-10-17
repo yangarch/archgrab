@@ -114,15 +114,26 @@ describe('화질 선택 (유튜브처럼 포맷이 여럿인 경우)', () => {
     setup([makeMultiFormatItem()])
     const picker = screen.getByRole('combobox', { name: /1번 항목 화질/ })
     expect(picker).toHaveValue('401')
-    expect(screen.getAllByRole('option')).toHaveLength(4)
+    // 영상 3개 + 음성 2개(m4a 원본 · mp3 변환)
+    expect(screen.getAllByRole('option')).toHaveLength(5)
   })
 
   it('고른 화질에 따라 버튼의 확장자가 바뀐다', async () => {
     const { user } = setup([makeMultiFormatItem()])
     expect(screen.getByRole('button', { name: 'mp4 내려받기' })).toBeInTheDocument()
 
-    await user.selectOptions(screen.getByRole('combobox', { name: /화질/ }), '140')
+    await user.selectOptions(screen.getByRole('combobox', { name: /화질/ }), 'audio')
     expect(screen.getByRole('button', { name: 'm4a 내려받기' })).toBeInTheDocument()
+
+    // mp3 는 변환이지만 버튼은 받게 될 확장자를 그대로 말해야 한다
+    await user.selectOptions(screen.getByRole('combobox', { name: /화질/ }), 'audio-mp3')
+    expect(screen.getByRole('button', { name: 'mp3 내려받기' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'm4a 내려받기' })).not.toBeInTheDocument()
+  })
+
+  it('mp3 는 변환이라고 표시된다 — 원본보다 좋아질 수 없다는 걸 알 수 있게', () => {
+    setup([makeMultiFormatItem()])
+    expect(screen.getByRole('option', { name: /변환/ })).toBeInTheDocument()
   })
 
   it('고른 화질이 다운로드 요청에 실린다', async () => {
@@ -276,3 +287,4 @@ describe('갤러리 준비 완료 표시', () => {
     expect(screen.getByRole('button', { name: /준비 중 30%/ })).not.toHaveClass('is-ready')
   })
 })
+

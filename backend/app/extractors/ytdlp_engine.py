@@ -255,8 +255,16 @@ def download(
     outtmpl: str = "%(title).80B [%(id)s].%(ext)s",
     format_spec: str | None = None,
     player_clients: list[str] | None = None,
+    audio_codec: str | None = None,
+    audio_bitrate: str | None = None,
 ) -> list[Path]:
-    """dest 에 받은 파일 경로 목록. 코덱 변환은 하지 않는다 (mux 만)."""
+    """dest 에 받은 파일 경로 목록.
+
+    기본은 **코덱 변환 없음** (컨테이너 mux 만, `-c copy`). `audio_codec` 이
+    오면 그때만 ffmpeg 로 음성을 다시 인코딩한다 — mp3 처럼 변환이 목적일 때다.
+    호출하는 쪽이 명시적으로 요청해야 하고, 그 선택지는 화면에 "변환"으로
+    표시된다. 조용히 변환하는 경로는 만들지 않는다.
+    """
     produced: list[Path] = []
     event = ProgressEvent()
 
@@ -282,15 +290,24 @@ def download(
             "noplaylist": False,
             # 최고 화질 원본. bv*+ba 는 컨테이너만 합치고 코덱은 건드리지 않는다.
             # format_spec 이 오면 사용자가 고른 포맷에 음성만 덧붙인다.
-            "format": (
-                "bestaudio/best" if selection.audio_only
-                else format_spec or "bv*+ba/b"
-            ),
+            # format_spec 이 가장 구체적인 지시다 — 있으면 그걸 따른다.
+            "format": format_spec or ("bestaudio/best" if selection.audio_only else "bv*+ba/b"),
             "merge_output_format": "mp4",
             # 재인코딩 금지 — 합칠 때도 스트림 복사만.
             "postprocessor_args": {"merger": ["-c", "copy"]},
         }
     )
+
+    if audio_codec:
+        # 음성만 뽑아 다시 인코딩한다. 컨테이너 합치기 설정은 의미가 없다.
+        opts.pop("merge_output_format", None)
+        opts["postprocessors"] = [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": audio_codec,
+                "preferredquality": audio_bitrate or "192",
+            }
+        ]
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

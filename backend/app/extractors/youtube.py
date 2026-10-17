@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import re
+import shutil
+from functools import lru_cache
 from pathlib import Path
 
 from app.config import get_settings
@@ -24,9 +26,9 @@ from app.core import secrets_store
 from app.core.errors import ArchGrabError, ErrorCode
 from app.core.models import FormatOption, MediaInfo
 from app.core.url import Kind, ParsedUrl
-from app.extractors.common import reject_unsupported_kinds
 from app.extractors import ytdlp_engine
 from app.extractors.base import ProgressCallback, Selection, noop_progress
+from app.extractors.common import reject_unsupported_kinds
 
 NAME = "youtube"
 
@@ -38,7 +40,16 @@ UNSUPPORTED_KINDS = {
 }
 PREFIX = "youtube"
 
-AUDIO_NOTE = "오디오만"
+AUDIO_NOTE = "오디오만 · 원본"
+
+# 음성 선택지의 id 는 yt-dlp 의 실제 포맷 id 를 쓰지 않는다. 그 id 는 영상마다
+# (그리고 player_client 마다) `140-0` 처럼 달라지는데, 내려받을 때 그걸 그대로
+# 쓰면 "음성에 음성을 합치는" 경로로 들어갔다. 선택지를 뜻만 담은 상수로 두고
+# 실제 포맷 선택은 내려받는 쪽에서 한다.
+AUDIO_FORMAT_ID = "audio"
+MP3_FORMAT_ID = "audio-mp3"
+MP3_NOTE = "오디오만 · 변환 192kbps"
+MP3_BITRATE = "192"
 
 # 유튜브가 요청을 봇으로 판정할 때 내는 문구. **간헐적이다** — 같은 서버에서
 # 같은 영상이 한 번 막히고 곧바로 다시 하면 되는 경우를 실제로 겪었다. 원인이
@@ -55,6 +66,15 @@ DEGRADED_NOTICE = (
     "이 경로는 화질이 크게 제한됩니다(대개 360p). 원래 화질로 받으려면 "
     "유튜브 쿠키를 등록하거나 프록시를 설정하세요."
 )
+
+
+@lru_cache(maxsize=1)
+def _can_convert() -> bool:
+    """ffmpeg 가 없으면 mp3 선택지를 아예 보여주지 않는다.
+
+    보여주고 실패하는 것보다 없는 게 낫다. 컨테이너 이미지에는 들어 있다.
+    """
+    return bool(shutil.which("ffmpeg"))
 
 
 def _is_audio_only(fmt: FormatOption) -> bool:
@@ -76,19 +96,26 @@ def _video_rank(fmt: FormatOption) -> tuple:
 
 
 def pick_audio(formats: list[FormatOption], *, container: str | None = None) -> FormatOption | None:
-    """합칠 음성을 고른다.
+    """음성을 고른다. **m4a(AAC)를 우선한다.**
 
-    mp4 에는 m4a(AAC)를 넣어야 한다. yt-dlp 의 bestaudio 는 품질만 보고 opus 를
-    고르는데, opus-in-mp4 는 QuickTime·iOS 기본 재생기가 열지 못하는 경우가 많다.
-    실측에서 그렇게 만들어졌다 — 받아지긴 하지만 재생이 안 되면 의미가 없다.
+    mp4 에 넣을 때 m4a 여야 하는 건 전부터 그랬다 — opus-in-mp4 는
+    QuickTime·iOS 기본 재생기가 열지 못하는 경우가 많다.
+
+    음성만 받을 때도 m4a 여야 한다. 전에는 컨테이너 지정이 없으면 **파일 크기로만**
+    골랐는데(`f.ext == None` 은 언제나 False), 그러면 opus 비트레이트가 더 높은
+    영상에서 `.webm` 이 나온다 — 음악 영상이 대표적이다. webm 음성은 아이폰
+    사진/음악 앱이 다루지 못해서 받아도 쓸 데가 없다.
+
+    음질을 깎는 선택도 아니다. 실측한 영상에서 m4a 가 129kbps, 최상 opus 가
+    124kbps 였다. opus 가 코덱 효율은 좋지만 yt-dlp 가 그걸 보고 더 낮은
+    비트레이트를 고르는 경우가 생긴다.
     """
     audio = [f for f in formats if _is_audio_only(f)]
     if not audio:
         return None
-    preferred = "m4a" if container == "mp4" else None
     return max(
         audio,
-        key=lambda f: (f.directly_fetchable, f.ext == preferred, f.filesize or 0),
+        key=lambda f: (f.directly_fetchable, f.ext == "m4a", f.filesize or 0),
     )
 
 
@@ -120,7 +147,22 @@ def group_formats(formats: list[FormatOption]) -> list[FormatOption]:
     best_audio = pick_audio(formats)
     if best_audio:
         # 라벨에서 "오디오만" 이 바로 보이게 한다 — 실수로 고르면 영상이 없다
-        grouped.append(best_audio.model_copy(update={"note": AUDIO_NOTE}))
+        grouped.append(
+            best_audio.model_copy(update={"id": AUDIO_FORMAT_ID, "note": AUDIO_NOTE})
+        )
+        if _can_convert():
+            # mp3 는 **재인코딩**이다. 원본보다 좋아질 수 없으므로 기본값으로
+            # 두지 않고, 라벨에 "변환"을 적어 고르는 사람이 알게 한다. 크기는
+            # 변환 결과라 미리 알 수 없어서 주장하지 않는다.
+            grouped.append(
+                FormatOption(
+                    id=MP3_FORMAT_ID,
+                    ext="mp3",
+                    vcodec="none",
+                    acodec="mp3",
+                    note=MP3_NOTE,
+                )
+            )
 
     return grouped
 
@@ -196,8 +238,16 @@ class YouTubeExtractor:
             # 유튜브는 완결 포맷이 없어 항상 mux 가 필요하다. yt-dlp 에 맡기고
             # 합칠 때는 스트림 복사만 한다(-c copy) — 재인코딩 없음.
             chosen = selection.format_for("0")
-            if selection.audio_only:
-                spec = None                      # ytdlp_engine 이 bestaudio 를 고른다
+            audio_codec: str | None = None
+
+            if chosen == MP3_FORMAT_ID:
+                # 변환이다. 원본 음성을 받은 뒤 ffmpeg 로 mp3 를 뽑는다.
+                spec = "bestaudio/best"
+                audio_codec = "mp3"
+            elif chosen == AUDIO_FORMAT_ID or selection.audio_only:
+                # 음성만. m4a 를 우선한다 — 아이폰이 그대로 재생한다.
+                # 여기에 bestaudio 를 덧붙이면 음성에 음성을 합치게 된다.
+                spec = "bestaudio[ext=m4a]/bestaudio"
             elif chosen:
                 # mp4 에는 m4a 를 우선 붙인다 — opus-in-mp4 는 QuickTime·iOS 가
                 # 열지 못하는 경우가 많다. 없으면 아무 음성이라도 붙인다.
@@ -215,6 +265,8 @@ class YouTubeExtractor:
                 format_spec=spec,
                 outtmpl=_outtmpl(parsed),
                 player_clients=primary,
+                audio_codec=audio_codec,
+                audio_bitrate=MP3_BITRATE,
             )
             if not paths:
                 raise ArchGrabError(ErrorCode.ENGINE_FAILED, "내려받은 파일이 없습니다.")

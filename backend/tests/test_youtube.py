@@ -8,7 +8,14 @@
 from __future__ import annotations
 
 from app.core.models import FormatOption
-from app.extractors.youtube import AUDIO_NOTE, group_formats, pick_audio
+from app.extractors.youtube import (
+    AUDIO_FORMAT_ID,
+    AUDIO_NOTE,
+    MP3_FORMAT_ID,
+    MP3_NOTE,
+    group_formats,
+    pick_audio,
+)
 
 
 def video(fid: str, height: int, ext: str, size: int, protocol: str = "https") -> FormatOption:
@@ -44,8 +51,9 @@ class TestGrouping:
         grouped = group_formats(REAL_SHAPE)
         heights = [f.height for f in grouped if f.height]
         assert len(heights) == len(set(heights)), heights
-        # 2160 / 1080 / 360 + 오디오 1
-        assert len(grouped) == 4
+        # 영상은 2160 / 1080 / 360 세 줄. 음성 선택지 개수와 섞어 세지 않는다 —
+        # 음성 쪽이 늘어도 이 테스트가 깨지면 안 된다.
+        assert len([f for f in grouped if f.height]) == 3
 
     def test_mp4_wins_at_the_same_resolution(self) -> None:
         """4K 에서 webm 342MB 대신 mp4 229MB 를 고른다 — 더 작고 호환성도 좋다."""
@@ -60,10 +68,13 @@ class TestGrouping:
         heights = [f.height for f in group_formats(REAL_SHAPE) if f.height]
         assert heights == sorted(heights, reverse=True)
 
-    def test_audio_only_option_is_last_and_labelled(self) -> None:
-        last = group_formats(REAL_SHAPE)[-1]
-        assert last.note == AUDIO_NOTE
-        assert last.vcodec == "none"
+    def test_audio_options_come_last_and_are_labelled(self) -> None:
+        grouped = group_formats(REAL_SHAPE)
+        audio = [f for f in grouped if f.vcodec == "none"]
+        # 음성 선택지는 영상 뒤에 온다 — 실수로 고르면 영상이 없다
+        assert grouped[-len(audio):] == audio
+        assert [f.note for f in audio] == [AUDIO_NOTE, MP3_NOTE]
+        assert [f.id for f in audio] == [AUDIO_FORMAT_ID, MP3_FORMAT_ID]
 
     def test_displayed_size_includes_the_audio_that_gets_merged(self) -> None:
         """영상전용 크기만 보여주면 실제 파일과 어긋난다 (실측: 8.0MB 표시 → 11.8MB)."""
@@ -79,7 +90,7 @@ class TestGrouping:
 
     def test_no_video_formats_still_offers_audio(self) -> None:
         grouped = group_formats([audio("140", "m4a", 3_300_000)])
-        assert len(grouped) == 1 and grouped[0].note == AUDIO_NOTE
+        assert [f.note for f in grouped] == [AUDIO_NOTE, MP3_NOTE]
 
 
 class TestAudioChoice:
@@ -88,9 +99,22 @@ class TestAudioChoice:
         picked = pick_audio(REAL_SHAPE, container="mp4")
         assert picked is not None and picked.ext == "m4a"
 
-    def test_without_container_takes_the_largest(self) -> None:
+    def test_standalone_audio_is_m4a_not_webm(self) -> None:
+        """컨테이너 지정이 없을 때 크기로만 고르면 opus(.webm) 가 나온다.
+
+        webm 음성은 아이폰 사진·음악 앱이 다루지 못해서 받아도 쓸 데가 없다.
+        실제로 음악 영상에서 그게 나오고 있었다 — opus 비트레이트가 m4a 보다
+        높으면 파일이 더 커서 "가장 큰 것"에 뽑혔다.
+        """
         picked = pick_audio(REAL_SHAPE)
-        assert picked is not None and picked.id == "251"
+        assert picked is not None
+        assert picked.ext == "m4a"
+
+    def test_m4a_wins_even_when_opus_is_bigger(self) -> None:
+        """음악 영상에서 실제로 일어나는 배치 — opus 가 더 크다."""
+        formats = [audio("140", "m4a", 3_300_000), audio("251", "webm", 5_000_000)]
+        picked = pick_audio(formats)
+        assert picked is not None and picked.ext == "m4a"
 
     def test_none_when_no_audio(self) -> None:
         assert pick_audio([video("134", 360, "mp4", 1)]) is None
@@ -162,3 +186,56 @@ def youtube_degraded_notice() -> str:
     from app.extractors.youtube import DEGRADED_NOTICE
 
     return DEGRADED_NOTICE.format(client="android_vr")
+
+
+class TestAudioDownloadSpec:
+    """어떤 포맷 문자열로 내려받는지. 여기서 틀리면 조용히 엉뚱한 파일이 나온다."""
+
+    @staticmethod
+    def _spec(format_id: str | None) -> tuple[str | None, str | None]:
+        """youtube.download 이 ytdlp_engine 에 넘기는 (format_spec, audio_codec)."""
+        from pathlib import Path
+
+        from app.core.url import parse_url
+        from app.extractors import youtube
+        from app.extractors.base import Selection
+
+        captured: dict[str, object] = {}
+
+        def fake_download(url, dest, **kwargs):  # noqa: ANN001, ANN003, ARG001
+            captured.update(kwargs)
+            return [Path(dest) / "x.m4a"]
+
+        original = youtube.ytdlp_engine.download
+        youtube.ytdlp_engine.download = fake_download
+        try:
+            parsed = parse_url("https://www.youtube.com/watch?v=aaaaaaaaaaa")
+            selection = Selection(format_ids={"0": format_id} if format_id else {})
+            youtube.extractor.download(parsed, selection, Path("/tmp"))
+        finally:
+            youtube.ytdlp_engine.download = original
+        return captured.get("format_spec"), captured.get("audio_codec")  # type: ignore[return-value]
+
+    def test_audio_only_does_not_merge_audio_onto_audio(self) -> None:
+        """예전에는 고른 음성 id 에 bestaudio 를 또 붙였다 — 음성+음성 mux."""
+        spec, codec = self._spec(AUDIO_FORMAT_ID)
+        assert spec is not None
+        assert "+" not in spec          # 합치지 않는다
+        assert "m4a" in spec            # m4a 를 우선한다
+        assert codec is None            # 변환하지 않는다
+
+    def test_mp3_asks_for_conversion_explicitly(self) -> None:
+        spec, codec = self._spec(MP3_FORMAT_ID)
+        assert codec == "mp3"
+        assert spec == "bestaudio/best"
+
+    def test_video_choice_still_gets_audio_merged(self) -> None:
+        """영상을 고르면 음성을 붙여야 한다 — 유튜브엔 완결 포맷이 없다."""
+        spec, codec = self._spec("137")
+        assert spec is not None and spec.startswith("137+")
+        assert codec is None
+
+    def test_conversion_is_never_the_default(self) -> None:
+        """아무것도 안 고르면 변환이 끼어들지 않는다."""
+        _, codec = self._spec(None)
+        assert codec is None
